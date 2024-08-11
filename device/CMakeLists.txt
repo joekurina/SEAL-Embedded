@@ -17,6 +17,12 @@ option(SE_BUILD_M4 "Build for M4 instead of for A7" OFF)
 # -- NOTE: Stack size issue with Sphere m4 prevents this deployment from running in most cases
 option(SE_M4_IS_SPHERE "Use Azure Sphere m4" OFF)
 
+# -- Set the compilers to Intel OneAPI if building locally
+if(SE_BUILD_LOCAL)
+    set(CMAKE_C_COMPILER icx)
+    set(CMAKE_CXX_COMPILER icpx)
+endif()
+
 # -- This needs to be above the 'project' line
 # -- Set these paths with paths for your setup
 if(NOT SE_BUILD_LOCAL)
