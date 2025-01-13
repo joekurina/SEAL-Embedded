@@ -21,6 +21,9 @@ option(SE_M4_IS_SPHERE "Use Azure Sphere m4" OFF)
 if(SE_BUILD_LOCAL)
     set(CMAKE_C_COMPILER icx)
     set(CMAKE_CXX_COMPILER icpx)
+
+    # Enable SYCL; you can add other flags if needed
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsycl")
 endif()
 
 # -- This needs to be above the 'project' line
@@ -36,7 +39,7 @@ if(NOT SE_BUILD_LOCAL)
     endif()
 endif()
 
-project(SEAL_EMBEDDED VERSION 1.1.0 LANGUAGES C ASM)
+project(SEAL_EMBEDDED VERSION 1.1.0 LANGUAGES C CXX ASM)
 
 #################
 # Configuration #

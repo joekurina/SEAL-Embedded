@@ -1,109 +1,74 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT license.
-
-/**
-@file fft.h
-
-Forward and Inverse Fast Fourier Transform.
-
-Note: Currently, the fft is only useful for testing, since only the ifft is used in the main
-algorithm. Leave both here for future use.
-*/
-
 #pragma once
 
-#include <complex.h>
+#include <stddef.h>  // for size_t
 
-#include "defines.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-/*
-static inline size_t bitrev(size_t input, size_t numbits)
+/**
+ * A simple struct to hold one complex value in a C-compatible way.
+ * The fields are named `re` and `im`.
+ */
+typedef struct fft_complex
 {
-    size_t res = 0;
-    for (size_t i = 0; i < numbits; i++)
-    {
-        // -- Get least significant bit of input and place in result.
-        // -- Shift result to the left towards msb position.
-        size_t lsb = input & 1;
-        res <<= 1;
-        res |= lsb;
-        input = input >> 1;
-    }
-    return res;
-}
-*/
+    double re;
+    double im;
+} fft_complex;
 
 /**
-Bit reversal algorithm for the FFT/IFFT.
-Ex: bitrev(6, 3): 6 = 0b110 -> (bit reverse) -> 0b011 = 3
-
-Requires: numbits <= 16
-
-(This does essentially the same as the commented out code above)
-
-@param[in] input    Value to bit reverse
-@param[in] numbits  Number of bits required to represent input. Must be <= 16.
-@returns            'input' in bit reversed order
-*/
-static inline size_t bitrev(size_t input, size_t numbits)
-{
-    size_t t = (((input & 0xaaaa) >> 1) | ((input & 0x5555) << 1));
-    t        = (((t & 0xcccc) >> 2) | ((t & 0x3333) << 2));
-    t        = (((t & 0xf0f0) >> 4) | ((t & 0x0f0f) << 4));
-    t        = (((t & 0xff00) >> 8) | ((t & 0x00ff) << 8));
-    return numbits == 0 ? 0 : t >> (16 - (size_t)(numbits));
-}
-
-// ===========================
-//          Roots
-// ===========================
+ * Bit-reversal function for the FFT/IFFT.
+ *
+ * Example: bitrev(6, 3) => 0b110 -> reversed -> 0b011 = 3
+ *
+ * Requires: numbits <= 16
+ *
+ * @param[in] input    Value to bit-reverse
+ * @param[in] numbits  Number of bits required to represent input (<=16)
+ * @returns            'input' in bit-reversed order
+ */
+size_t bitrev(size_t input, size_t numbits);
 
 /**
-Generates the roots for the FFT from scratch (in bit-reversed order)
-
-Space req: 'roots' must have storage for n double complex values.
-
-@param[in]  n      FFT transform size (number of roots to generate)
-@param[in]  logn   Minimum number of bits required to represent n (i.e. log2(n))
-@param[out] roots  FFT roots (in bit-reversed order)
-*/
-void calc_fft_roots(size_t n, size_t logn, double complex *roots);
+ * Generates roots for the FFT from scratch (in bit-reversed order).
+ *
+ * @param[in]  n      The FFT size (number of roots to generate)
+ * @param[in]  logn   Floor(log2(n))
+ * @param[out] roots  Array of `fft_complex` of length n (bit-reversed order).
+ */
+void calc_fft_roots(size_t n, size_t logn, fft_complex* roots);
 
 /**
-Generates the roots for the IFFT from scratch (in bit-reversed order)
-
-Space req: 'ifft_roots' must have storage for n double complex values.
-
-@param[in]  n           IFFT transform size (number of roots to generate)
-@param[in]  logn        Minimum number of bits required to represent n (i.e. log2(n))
-@param[out] ifft_roots  IFFT roots (in bit-reversed order)
-*/
-void calc_ifft_roots(size_t n, size_t logn, double complex *ifft_roots);
-
-// ===========================
-//          FFT/IFFT
-// ===========================
-/**
-In-place Inverse Fast-Fourier Transform using the Harvey butterfly.
-'roots' is ignored (and may be null) if SE_IFFT_OTF is chosen.
-
-Note: This function does not divide the final result by n. This step must be performed outside of
-this function.
-
-@param[in,out] vec    Input/Output vector of n double complex values
-@param[in]     n      IFFT transform size (i.e. polynomial degree)
-@param[in]     logn   Minimum number of bits required to represent n (i.e. log2(n))
-@param[in]     roots  [Optional]. As set by calc_ifft_roots or load_ifft_roots
-*/
-void ifft_inpl(double complex *vec, size_t n, size_t logn, const double complex *roots);
+ * Generates roots for the IFFT from scratch (in bit-reversed order).
+ *
+ * @param[in]  n           The IFFT size
+ * @param[in]  logn        Floor(log2(n))
+ * @param[out] ifft_roots  Array of `fft_complex` of length n (bit-reversed order).
+ */
+void calc_ifft_roots(size_t n, size_t logn, fft_complex* ifft_roots);
 
 /**
-In-place forward Fast-Fourier Transform using the Harvey butterfly.
-'roots' is ignored (and may be null) if SE_FFT_OTF is chosen.
+ * In-place Inverse Fast-Fourier Transform using the Harvey butterfly.
+ * Does NOT divide the final result by `n`.
+ *
+ * @param[in,out] vec   Array of `fft_complex` of length n (input/output)
+ * @param[in]     n     IFFT size (polynomial degree)
+ * @param[in]     logn  Floor(log2(n))
+ * @param[in]     roots [Optional]. As set by `calc_ifft_roots` or similar.
+ */
+void ifft_inpl(fft_complex* vec, size_t n, size_t logn, const fft_complex* roots);
 
-@param[in,out] vec    Input/Output vector of n double complex values.
-@param[in]     n      FFT transform size (i.e. polynomial degree)
-@param[in]     logn   Minimum number of bits required to represent n (i.e. log2(n))
-@param[in]     roots  [Optional]. As set by calc_fft_roots or load_fft_roots
-*/
-void fft_inpl(double complex *vec, size_t n, size_t logn, const double complex *roots);
+/**
+ * In-place forward Fast-Fourier Transform using the Harvey butterfly.
+ * `roots` is ignored (and may be null) if some OTF approach is chosen.
+ *
+ * @param[in,out] vec   Array of `fft_complex` of length n (input/output)
+ * @param[in]     n     FFT size (polynomial degree)
+ * @param[in]     logn  Floor(log2(n))
+ * @param[in]     roots [Optional]. As set by `calc_fft_roots` or similar.
+ */
+void fft_inpl(fft_complex* vec, size_t n, size_t logn, const fft_complex* roots);
+
+#ifdef __cplusplus
+} // extern "C"
+#endif
