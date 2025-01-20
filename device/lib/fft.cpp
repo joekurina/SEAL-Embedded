@@ -1,21 +1,12 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT license.
+// fft.cpp
+// Compiled as C++ but implements the same functions from fft.h
+// bridging _Complex double <-> std::complex<double>.
 
-/**
-@file fft.cpp
-
-Note: All roots are mod 2n, where n is the number of elements
-(e.g. polynomial degree) in the transformed vector.
-See the paper for more details.
-*/
-
-#include "fft.h"        // Includes the struct fft_complex from fft.h
-#include "defines.h"    // For se_assert(...) or PolySizeType
-#include "util_print.h" // For printing/debug macros, if needed
-
-#include <math.h>       // For cos, sin, M_PI, etc.
-#include <stdio.h>      // For printf, etc.
-#include <stdlib.h>     // For exit()
+#include "fft.h"    // has "typedef _Complex double fft_complex;"
+#include <cassert>  // if we want to do asserts
+#include <cmath>    // for sin, cos, M_PI
+#include <complex>  // for std::complex<double>
+#include <vector>   // optional for dynamic arrays
 
 #ifdef __cplusplus
 extern "C" {
@@ -25,89 +16,10 @@ extern "C" {
 #define M_PI 3.14159265358979323846
 #endif
 
-// ------------------------------------------------------------------
-// 1) Helpers for complex arithmetic on fft_complex
-// ------------------------------------------------------------------
-
-static inline fft_complex make_fft(double re, double im)
-{
-    fft_complex c;
-    c.re = re;
-    c.im = im;
-    return c;
-}
-
-static inline fft_complex add_fft(fft_complex a, fft_complex b)
-{
-    fft_complex r;
-    r.re = a.re + b.re;
-    r.im = a.im + b.im;
-    return r;
-}
-
-static inline fft_complex sub_fft(fft_complex a, fft_complex b)
-{
-    fft_complex r;
-    r.re = a.re - b.re;
-    r.im = a.im - b.im;
-    return r;
-}
-
-static inline fft_complex mul_fft(fft_complex a, fft_complex b)
-{
-    // (a.re + i a.im) * (b.re + i b.im)
-    // = (a.re*b.re - a.im*b.im) + i(a.re*b.im + a.im*b.re)
-    fft_complex r;
-    r.re = a.re*b.re - a.im*b.im;
-    r.im = a.re*b.im + a.im*b.re;
-    return r;
-}
-
-static inline fft_complex conj_fft(fft_complex c)
-{
-    fft_complex r;
-    r.re = c.re;
-    r.im = -(c.im);
-    return r;
-}
-
-// ------------------------------------------------------------------
-// 2) Angle and root calculations
-// ------------------------------------------------------------------
-
-/**
-Helper function to calculate the angle of a particular root
-
-@param[in] k  Index of root
-@param[in] m  Degree of roots (i.e. 2n)
-@returns      Angle of the root
-*/
-static double calc_angle(size_t k, size_t m)
-{
-    // 2 * pi * k / m
-    return 2.0 * M_PI * (double)k / (double)m;
-}
-
-/**
-Helper function that calculates one FFT root on-the-fly
-using the angle from calc_angle(...)
-*/
-static fft_complex calc_root_otf(size_t k, size_t m)
-{
-    k &= (m - 1);  // just in case
-    double angle = calc_angle(k, m);
-    double re = cos(angle);
-    double im = sin(angle);
-    return make_fft(re, im);
-}
-
-// ------------------------------------------------------------------
-// 3) Public API implementations (matching fft.h)
-// ------------------------------------------------------------------
-
+// If code calls bitrev(...) from outside, we must define it here.
 size_t bitrev(size_t input, size_t numbits)
 {
-    // Same bit reversal logic as before
+    // typical 16-bit reversal approach:
     size_t t = (((input & 0xaaaa) >> 1) | ((input & 0x5555) << 1));
     t        = (((t & 0xcccc) >> 2) | ((t & 0x3333) << 2));
     t        = (((t & 0xf0f0) >> 4) | ((t & 0x0f0f) << 4));
@@ -115,128 +27,179 @@ size_t bitrev(size_t input, size_t numbits)
     return (numbits == 0) ? 0 : (t >> (16 - numbits));
 }
 
-void calc_fft_roots(size_t n, size_t logn, fft_complex *roots)
-{
-    se_assert(n >= 4);
-    se_assert(roots);
+/**
+ * If we're not including <complex.h> in C++ mode, we may not have macros
+ * `creal(c)` and `cimag(c)`. Define them with compiler extensions:
+ */
+#ifndef creal
+#  define creal(c) __real__(c)
+#endif
+#ifndef cimag
+#  define cimag(c) __imag__(c)
+#endif
 
-    // m = 2n
-    PolySizeType m = (PolySizeType)(n << 1);
+/** 
+ * Convert std::complex<double> -> _Complex double without using `I`.
+ */
+static inline _Complex double to_c99(const std::complex<double> &z)
+{
+    _Complex double tmp = 0; // 0 + 0i
+    __real__ tmp = z.real();
+    __imag__ tmp = z.imag();
+    return tmp;
+}
+
+/**
+ * Convert _Complex double -> std::complex<double>.
+ * We use our macros `creal(c)` and `cimag(c)`.
+ */
+static inline std::complex<double> from_c99(_Complex double c)
+{
+    return std::complex<double>(creal(c), cimag(c));
+}
+
+// Basic root calculation
+static std::complex<double> calc_root_otf(size_t k, size_t m)
+{
+    double angle = 2.0 * M_PI * (double)k / (double)m;
+    return std::complex<double>(std::cos(angle), std::sin(angle));
+}
+
+// --- Public API from fft.h ---
+
+void calc_fft_roots(size_t n, size_t logn, fft_complex* roots)
+{
+    assert(n >= 4 && roots);
+
+    size_t m = (n << 1);
     for (size_t i = 0; i < n; i++)
     {
+        // original approach: bit-reverse i if that's the storage scheme
         size_t br = bitrev(i, logn);
-        roots[i] = calc_root_otf(br, m);
+        std::complex<double> z = calc_root_otf(br, m);
+        roots[i] = to_c99(z);
     }
 }
 
-void calc_ifft_roots(size_t n, size_t logn, fft_complex *ifft_roots)
+void calc_ifft_roots(size_t n, size_t logn, fft_complex* ifft_roots)
 {
-    se_assert(n >= 4);
-    se_assert(ifft_roots);
+    assert(n >= 4 && ifft_roots);
 
-    PolySizeType m = (PolySizeType)(n << 1);
+    size_t m = (n << 1);
     for (size_t i = 0; i < n; i++)
     {
-        // conj of the forward root, but with i-1 (or i-1 + 1)
-        fft_complex root = calc_root_otf(bitrev(i - 1, logn), m);
-        ifft_roots[i]    = conj_fft(root);
-        // ifft_roots[i] = conj_fft(calc_root_otf(bitrev(i - 1, logn) + 1, m));
+        // conj of the forward root at (i - 1), or bitreversed logic if needed
+        std::complex<double> z = calc_root_otf((i - 1), m);
+        z = std::conj(z);
+        ifft_roots[i] = to_c99(z);
     }
 }
 
-void ifft_inpl(fft_complex *vec, size_t n, size_t logn, const fft_complex *roots)
+void ifft_inpl(fft_complex* vec, size_t n, size_t logn, const fft_complex* roots)
 {
-#if defined(SE_IFFT_LOAD_FULL) || defined(SE_IFFT_ONE_SHOT)
-    se_assert(roots);
-    size_t root_idx = 1;  // some indexing logic if you store roots in bit-rev order
-#elif defined(SE_IFFT_OTF)
-    (void)roots;          // not used
-    size_t m = n << 1;    // 2n for angle
-#else
-    printf("IFFT option not found!\n");
-    exit(0);
-#endif
+    // 1) copy input array from _Complex double to C++
+    std::vector<std::complex<double>> data(n);
+    for (size_t i = 0; i < n; i++)
+        data[i] = from_c99(vec[i]);
 
-    // Example: n=8, logn=3 -> see the multi-line comment from your original code
-    size_t tt = 1;        // size of each butterfly
-    size_t h  = n / 2;    // number of groups
-
-    for (size_t i = 0; i < logn; i++, tt *= 2, h /= 2)
+    // 2) copy roots if present (one-shot or load-full)
+    std::vector<std::complex<double>> r(n);
+    if (roots)
     {
-        for (size_t j = 0, kstart = 0; j < h; j++, kstart += (2 * tt))
-        {
-            fft_complex s;
+        for (size_t i = 0; i < n; i++)
+            r[i] = from_c99(roots[i]);
+    }
 
-#if defined(SE_IFFT_LOAD_FULL) || defined(SE_IFFT_ONE_SHOT)
-            // If you have precomputed roots in bit-rev order, pick them:
-            s = roots[root_idx++];
-#elif defined(SE_IFFT_OTF)
-            // On-the-fly root generation + conj
-            s = conj_fft(calc_root_otf(bitrev(h + j, logn), m));
-#else
-            printf("Error! IFFT option not found!\n");
-            exit(1);
-#endif
+    // reset root index each call
+    size_t root_idx = 1;
+
+    // 3) do the IFFT logic
+    // For the "Harvey butterfly," we do:
+    //   s = conj( calc_root_otf(bitrev(h + j, logn), 2n ) )  if OTF
+    //   s = r[root_idx++]  if one-shot or load-full
+    size_t tt = 1, h = n / 2;
+    for (size_t round = 0; round < logn; round++, tt *= 2, h /= 2)
+    {
+        for (size_t j = 0, kstart = 0; j < h; j++, kstart += 2*tt)
+        {
+            std::complex<double> s;
+            if (roots) 
+            {
+                // "one-shot" approach
+                s = r[root_idx++];
+            }
+            else
+            {
+                // "on-the-fly" approach
+                size_t br = bitrev(h + j, logn);
+                s = std::conj(calc_root_otf(br, n << 1));
+            }
 
             for (size_t k = kstart; k < kstart + tt; k++)
             {
-                fft_complex u = vec[k];
-                fft_complex v = vec[k + tt];
-                // u + v
-                vec[k]       = add_fft(u, v);
-                // (u - v)*s
-                fft_complex tmp = sub_fft(u, v);
-                vec[k + tt] = mul_fft(tmp, s);
+                auto u = data[k];
+                auto w = data[k + tt];
+                data[k]    = u + w;
+                data[k+tt] = (u - w) * s;
             }
         }
     }
+
+    // 4) copy results back
+    for (size_t i = 0; i < n; i++)
+        vec[i] = to_c99(data[i]);
 }
 
-void fft_inpl(fft_complex *vec, size_t n, size_t logn, const fft_complex *roots)
+void fft_inpl(fft_complex* vec, size_t n, size_t logn, const fft_complex* roots)
 {
-    // Similar logic to ifft_inpl, but reversed butterfly steps
-    se_assert(n >= 4);
+    // 1) copy input array from _Complex double to std::complex
+    std::vector<std::complex<double>> data(n);
+    for (size_t i = 0; i < n; i++)
+        data[i] = from_c99(vec[i]);
 
-    size_t m = (size_t)(n << 1); // 2n for angle
-#ifdef SE_FFT_OTF
-    (void)roots;                // not used if OTF
-#else
-    se_assert(roots);
-#endif
-
-    size_t h  = 1;
-    size_t tt = n / 2;
-
-#if defined(SE_FFT_LOAD_FULL) || defined(SE_FFT_ONE_SHOT)
-    size_t root_idx = 1;  // again, depends on how you stored the roots
-#endif
-
-    for (size_t i = 0; i < logn; i++, h *= 2, tt /= 2)
+    // 2) copy roots if present
+    std::vector<std::complex<double>> r(n);
+    if (roots)
     {
-        for (size_t j = 0, kstart = 0; j < h; j++, kstart += (2 * tt))
-        {
-            fft_complex s;
+        for (size_t i = 0; i < n; i++)
+            r[i] = from_c99(roots[i]);
+    }
 
-#if defined(SE_FFT_LOAD_FULL) || defined(SE_FFT_ONE_SHOT)
-            s = roots[root_idx++];
-#elif defined(SE_FFT_OTF)
-            s = calc_root_otf(bitrev(h + j, logn), m);
-#else
-            printf("Error! FFT option not found!\n");
-            exit(1);
-#endif
+    // reset root_idx each call
+    size_t root_idx = 1;
+
+    // 3) do the FFT logic
+    //   s = calc_root_otf(bitrev(h + j, logn), 2n) if OTF
+    //   s = r[root_idx++] if one-shot or load-full
+    size_t h = 1, tt = n / 2;
+    for (size_t round = 0; round < logn; round++, h *= 2, tt /= 2)
+    {
+        for (size_t j = 0, kstart = 0; j < h; j++, kstart += 2*tt)
+        {
+            std::complex<double> s;
+            if (roots)
+            {
+                s = r[root_idx++];
+            }
+            else
+            {
+                size_t br = bitrev(h + j, logn);
+                s = calc_root_otf(br, n << 1);
+            }
 
             for (size_t k = kstart; k < kstart + tt; k++)
             {
-                fft_complex u = vec[k];
-                // v = vec[k+tt]*s
-                fft_complex v = mul_fft(vec[k + tt], s);
-                // (u+v), (u-v)
-                vec[k]       = add_fft(u, v);
-                vec[k + tt]  = sub_fft(u, v);
+                auto u = data[k];
+                auto w = data[k + tt] * s;
+                data[k]    = u + w;
+                data[k+tt] = u - w;
             }
         }
     }
+
+    // 4) copy results back
+    for (size_t i = 0; i < n; i++)
+        vec[i] = to_c99(data[i]);
 }
 
 #ifdef __cplusplus
