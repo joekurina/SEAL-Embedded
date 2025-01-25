@@ -28,8 +28,8 @@ size_t bitrev(size_t input, size_t numbits)
 }
 
 /**
- * If we're not including <complex.h> in C++ mode, we may not have macros
- * `creal(c)` and `cimag(c)`. Define them with compiler extensions:
+ * If <complex.h> isn't included in C++ mode, we won't have macros
+ * `creal(c)` and `cimag(c)`. Define them here with compiler extensions:
  */
 #ifndef creal
 #  define creal(c) __real__(c)
@@ -39,7 +39,7 @@ size_t bitrev(size_t input, size_t numbits)
 #endif
 
 /** 
- * Convert std::complex<double> -> _Complex double without using `I`.
+ * Convert C++ std::complex<double> -> C99 _Complex double without using `I`.
  */
 static inline _Complex double to_c99(const std::complex<double> &z)
 {
@@ -50,8 +50,8 @@ static inline _Complex double to_c99(const std::complex<double> &z)
 }
 
 /**
- * Convert _Complex double -> std::complex<double>.
- * We use our macros `creal(c)` and `cimag(c)`.
+ * Convert C99 _Complex double -> C++ std::complex<double>.
+ * use macros `creal(c)` and `cimag(c)`.
  */
 static inline std::complex<double> from_c99(_Complex double c)
 {
@@ -64,8 +64,6 @@ static std::complex<double> calc_root_otf(size_t k, size_t m)
     double angle = 2.0 * M_PI * (double)k / (double)m;
     return std::complex<double>(std::cos(angle), std::sin(angle));
 }
-
-// --- Public API from fft.h ---
 
 void calc_fft_roots(size_t n, size_t logn, fft_complex* roots)
 {
