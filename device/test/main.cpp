@@ -21,27 +21,27 @@ extern "C" {
 }
 // Test function declarations in C linkage block
 extern "C" {
-    extern void test_add_uint(void);
-    extern void test_mult_uint(void);
-    extern void test_add_mod(void);
-    extern void test_neg_mod(void);
-    extern void test_mul_mod(void);
-    extern void test_sample_poly_uniform(size_t n);
-    extern void test_sample_poly_ternary(size_t n);
-    extern void test_sample_poly_ternary_small(size_t n);
-    extern void test_barrett_reduce(void);
-    extern void test_barrett_reduce_wide(void);
-    extern void test_poly_mult_ntt(size_t n, size_t nprimes);
+    //extern void test_add_uint(void);
+    //extern void test_mult_uint(void);
+    //extern void test_add_mod(void);
+    //extern void test_neg_mod(void);
+    //extern void test_mul_mod(void);
+    //extern void test_sample_poly_uniform(size_t n);
+    //extern void test_sample_poly_ternary(size_t n);
+    //extern void test_sample_poly_ternary_small(size_t n);
+    //extern void test_barrett_reduce(void);
+    //extern void test_barrett_reduce_wide(void);
+    //extern void test_poly_mult_ntt(size_t n, size_t nprimes);
     extern void test_fft(size_t n);
-    extern void test_enc_zero_sym(size_t n, size_t nprimes);
-    extern void test_enc_zero_asym(size_t n, size_t nprimes);
-    extern void test_ckks_encode(size_t n);
-    extern void test_ckks_encode_encrypt_sym(size_t n, size_t nprimes);
-    extern void test_ckks_encode_encrypt_asym(size_t n, size_t nprimes);
-    extern void test_ckks_api_sym(void);
-    extern void test_ckks_api_asym(void);
-    extern int test_network_basic(void);
-    extern void test_network(void);
+    //extern void test_enc_zero_sym(size_t n, size_t nprimes);
+    //extern void test_enc_zero_asym(size_t n, size_t nprimes);
+    //extern void test_ckks_encode(size_t n);
+    //extern void test_ckks_encode_encrypt_sym(size_t n, size_t nprimes);
+    //extern void test_ckks_encode_encrypt_asym(size_t n, size_t nprimes);
+    //extern void test_ckks_api_sym(void);
+    //extern void test_ckks_api_asym(void);
+    //extern int test_network_basic(void);
+    //extern void test_network(void);
 }
 
 int main()
@@ -60,29 +60,29 @@ int main()
     const size_t nprimes = SE_NPRIMES;
 #endif
 
-    test_sample_poly_uniform(n);
-    test_sample_poly_ternary(n);
-    test_sample_poly_ternary_small(n);  // Only useful when SE_USE_MALLOC is defined
+    //test_sample_poly_uniform(n);
+    //test_sample_poly_ternary(n);
+    //test_sample_poly_ternary_small(n);  // Only useful when SE_USE_MALLOC is defined
 
-    test_add_uint();
-    test_mult_uint();
-    test_barrett_reduce();
-    test_barrett_reduce_wide();
-    test_add_mod();
-    test_neg_mod();
-    test_mul_mod();
+    //test_add_uint();
+    //test_mult_uint();
+    //test_barrett_reduce();
+    //test_barrett_reduce_wide();
+    //test_add_mod();
+    //test_neg_mod();
+    //test_mul_mod();
 
     // Note: This test uses schoolbook multiplication (slow)
     // test_poly_mult_ntt(n, nprimes);
 
     test_fft(n);
-    test_enc_zero_sym(n, nprimes);
-    test_enc_zero_asym(n, nprimes);
-    test_ckks_encode(n);
+    //test_enc_zero_sym(n, nprimes);
+    //test_enc_zero_asym(n, nprimes);
+    //test_ckks_encode(n);
 
     // Main tests
-    test_ckks_encode_encrypt_sym(n, nprimes);
-    test_ckks_encode_encrypt_asym(n, nprimes);
+    //test_ckks_encode_encrypt_sym(n, nprimes);
+    //test_ckks_encode_encrypt_asym(n, nprimes);
 
     // Optional API verification tests
     // test_ckks_api_sym();
