@@ -22,12 +22,12 @@ size_t bitrev(size_t input, size_t numbits);
 /**
  * Generate the FFT roots in `_Complex double` form (bit-reversed).
  */
-void calc_fft_roots(size_t n, size_t logn, fft_complex *roots);
+//void calc_fft_roots(size_t n, size_t logn, fft_complex *roots);
 
 /**
  * Generate the IFFT roots in `_Complex double` form (bit-reversed).
  */
-void calc_ifft_roots(size_t n, size_t logn, fft_complex *ifft_roots);
+//void calc_ifft_roots(size_t n, size_t logn, fft_complex *ifft_roots);
 
 /**
  * In-place IFFT using `_Complex double`.
