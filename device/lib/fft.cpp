@@ -7,6 +7,12 @@
 #include <complex>
 #include <complex.h>
 
+#include "lib_fft_rtl.hpp"
+#include "lib_ifft_rtl.hpp"
+
+#include "exception_handler.hpp"
+#include <stdint.h>
+
 // Ensure M_PI is defined.
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -42,6 +48,12 @@ namespace {
 }
 
 //-----------------------------------------------------------------------------
+// Forward-declare the kernel name to reduce name mangling.
+//-----------------------------------------------------------------------------
+class KernelFFT;
+class KernelIFFT;
+
+//-----------------------------------------------------------------------------
 // Define SYCL pipe types for streaming FFT data between host and kernel.
 //-----------------------------------------------------------------------------
 class IDPipeFFTIn;
@@ -57,12 +69,6 @@ class IDPipeIFFTOut;
 using OutputPipeIFFT = sycl::ext::intel::experimental::pipe<IDPipeIFFTOut, std::complex<double>>;
 
 //-----------------------------------------------------------------------------
-// Forward-declare the kernel name to reduce name mangling.
-//-----------------------------------------------------------------------------
-class KernelFFT;
-class KernelIFFT;
-
-//-----------------------------------------------------------------------------
 // Kernel functor that implements the in-place FFT using SYCL pipes.
 // This kernel reads FIXED_N elements from the input pipe, computes an FFT
 // (using a decimation-in-time Cooley–Tukey algorithm), and writes the result
@@ -71,74 +77,41 @@ class KernelIFFT;
 // Note: This implementation ignores the precomputed roots (the twiddle
 // factors are computed on the fly).
 //-----------------------------------------------------------------------------
+template <typename PipeIn, typename PipeOut>
 struct FFTKernelFunctor {
-  void operator()() const {
-    std::complex<double> data[FIXED_N];
-
-    // Read FIXED_N values from the input pipe.
-    for (size_t i = 0; i < FIXED_N; ++i) {
-      data[i] = InputPipeFFT::read();
+    // use a streaming pipelined invocation interface to minimize hardware
+    // overhead
+    auto get(sycl::ext::oneapi::experimental::properties_tag) {
+        return sycl::ext::oneapi::experimental::properties{
+            sycl::ext::intel::experimental::streaming_interface_accept_downstream_stall, 
+            sycl::ext::intel::experimental::pipelined<1>
+        };
     }
-
-    // Perform in-place FFT.
-    for (size_t stage = 0; stage < FIXED_LOGN; stage++) {
-      size_t m = 1 << (stage + 1);  // group size for this stage
-      for (size_t k = 0; k < FIXED_N; k += m) {
-        for (size_t j = 0; j < m / 2; j++) {
-          double angle = -2.0 * M_PI * j / m;
-          std::complex<double> twiddle(std::cos(angle), std::sin(angle));
-          std::complex<double> t = twiddle * data[k + j + m / 2];
-          std::complex<double> u = data[k + j];
-          data[k + j] = u + t;
-          data[k + j + m / 2] = u - t;
-        }
-      }
+    void operator()() const {
+        std::complex<double> fft_input = PipeIn::read();
+        std::complex<double> fft_output = rtl_fft(fft_input);
+        PipeOut::write(fft_output);
     }
-
-    // Write the FFT result to the output pipe.
-    for (size_t i = 0; i < FIXED_N; ++i) {
-      OutputPipeFFT::write(data[i]);
-    }
-  }
 };
 
 //-----------------------------------------------------------------------------
 // Kernel functor that implements the in-place IFFT using SYCL pipes.
 //-----------------------------------------------------------------------------
+template <typename PipeIn, typename PipeOut>
 struct IFFTKernelFunctor {
-  void operator()() const {
-    std::complex<double> data[FIXED_N];
-
-    // Read FIXED_N values from the IFFT input pipe.
-    for (size_t i = 0; i < FIXED_N; ++i) {
-      data[i] = InputPipeIFFT::read();
+    // use a streaming pipelined invocation interface to minimize hardware
+    // overhead
+    auto get(sycl::ext::oneapi::experimental::properties_tag) {
+        return sycl::ext::oneapi::experimental::properties{
+            sycl::ext::intel::experimental::streaming_interface_accept_downstream_stall, 
+            sycl::ext::intel::experimental::pipelined<1>
+        };
     }
-
-    // Perform in-place IFFT.
-    for (size_t stage = 0; stage < FIXED_LOGN; stage++) {
-      size_t m = 1 << (stage + 1);  // group size for this stage
-      for (size_t k = 0; k < FIXED_N; k += m) {
-        for (size_t j = 0; j < m / 2; j++) {
-          double angle = 2.0 * M_PI * j / m;
-          std::complex<double> twiddle(std::cos(angle), std::sin(angle));
-          std::complex<double> t = twiddle * data[k + j + m / 2];
-          std::complex<double> u = data[k + j];
-          data[k + j] = u + t;
-          data[k + j + m / 2] = u - t;
-        }
-      }
+    void operator()() const {
+        std::complex<double> ifft_input = PipeIn::read();
+        std::complex<double> ifft_output = rtl_ifft(ifft_input);
+        PipeOut::write(ifft_output);
     }
-
-    // Normalize the IFFT result.
-    for (size_t i = 0; i < FIXED_N; ++i) {
-      data[i] /= FIXED_N;
-    }
-
-    // Write the IFFT result to the output pipe.
-    for (size_t i = 0; i < FIXED_N; ++i) {
-      OutputPipeIFFT::write(data[i]);
-    }
-  }
 };
 
 //-----------------------------------------------------------------------------
@@ -149,30 +122,36 @@ struct IFFTKernelFunctor {
 // kernel that performs the FFT, and then reads the results back.
 //-----------------------------------------------------------------------------
 extern "C" void fft_inpl(fft_complex* vec, size_t n, size_t logn, const fft_complex* roots) {
-  // For this SYCL-based implementation, we require n == 4096 and logn == 12.
-  assert(n == FIXED_N);
-  assert(logn == FIXED_LOGN);
-  (void)roots;  // The roots parameter is ignored in this implementation.
+    std::complex<double> result_fft;
+    // For this SYCL-based implementation, we require n == FIXED_N and logn == FIXED_LOGN.
+    assert(n == FIXED_N);
+    assert(logn == FIXED_LOGN);
+    (void)roots;
+    auto selector = sycl::ext::intel::fpga_emulator_selector_v;
 
-  // Create a SYCL queue internally.
-  sycl::queue q{ sycl::default_selector{} };
+    try {
+        sycl::queue q{ selector };
+        auto device = q.get_device();
+        //std::cout << "Running on device: "
+        //        << device.get_info<sycl::info::device::name>().c_str()
+        //        << std::endl;
 
-  // Write input data into the input pipe.
-  // Convert each fft_complex value to std::complex<double>.
-  for (size_t i = 0; i < n; ++i) {
-    std::complex<double> value = from_c(vec[i]);
-    InputPipeFFT::write(q, value);
-  }
+        for (size_t i = 0; i < n; ++i) {
+            std::complex<double> value = from_c(vec[i]);
+            InputPipeFFT::write(q, value);
+        }
 
-  // Launch the FFT kernel as a single_task.
-  q.single_task<KernelFFT>(FFTKernelFunctor{}).wait();
+        q.single_task<KernelFFT>(FFTKernelFunctor<InputPipeFFT,OutputPipeFFT>{}).wait();
 
-  // Read the FFT result from the output pipe.
-  // Convert each std::complex<double> back to fft_complex.
-  for (size_t i = 0; i < n; ++i) {
-    std::complex<double> value = OutputPipeFFT::read(q);
-    vec[i] = to_c(value);
-  }
+        for (size_t i = 0; i < n; ++i) {
+            result_fft = OutputPipeFFT::read(q);
+            vec[i] = to_c(value);
+        }
+
+    } catch (sycl::exception const& e) {
+        std::cerr << "Caught a synchronous SYCL exception: " << e.what() << std::endl;
+        std::exit(1);
+    }
 }
 
 //-----------------------------------------------------------------------------
@@ -184,26 +163,36 @@ extern "C" void fft_inpl(fft_complex* vec, size_t n, size_t logn, const fft_comp
 //-----------------------------------------------------------------------------
 void ifft_inpl(fft_complex* vec, size_t n, size_t logn, const fft_complex* roots)
 {
-  // For this SYCL-based implementation, we require n == 4096 and logn == 12.
-  assert(n == FIXED_N);
-  assert(logn == FIXED_LOGN);
-  (void)roots;  // The roots parameter is ignored in this implementation.
+    std::complex<double> result_ifft;
+    // For this SYCL-based implementation, we require n == FIXED_N and logn == FIXED_LOGN.
+    assert(n == FIXED_N);
+    assert(logn == FIXED_LOGN);
+    (void)roots;
+    auto selector = sycl::ext::intel::fpga_emulator_selector_v;
 
-  // Create a SYCL queue internally.
-  sycl::queue q{ sycl::default_selector{} };
+    try {
+        sycl::queue q{ selector };
+        auto device = q.get_device();
+        //std::cout << "Running on device: "
+        //        << device.get_info<sycl::info::device::name>().c_str()
+        //        << std::endl;
 
-  // Write input data into the IFFT input pipe.
-  for (size_t i = 0; i < n; ++i) {
-    std::complex<double> value = from_c(vec[i]);
-    InputPipeIFFT::write(q, value);
-  }
+        for (size_t i = 0; i < n; ++i) {
+            std::complex<double> value = from_c(vec[i]);
+            InputPipeIFFT::write(q, value);
+        }
 
-  // Launch the IFFT kernel as a single_task.
-  q.single_task<KernelIFFT>(IFFTKernelFunctor{}).wait();
+        q.single_task<KernelIFFT>(IFFTKernelFunctor<InputPipeIFFT,OutputPipeIFFT>{}).wait();
 
-  // Read the IFFT result from the IFFT output pipe.
-  for (size_t i = 0; i < n; ++i) {
-    std::complex<double> value = OutputPipeIFFT::read(q);
-    vec[i] = to_c(value);
-  }
+        // Loops reads the output pipe into the result vector.
+        // Result vector is then converted to a C-type and stored in vec.
+        for (size_t i = 0; i < n; ++i) {
+            result_ifft = OutputPipeIFFT::read(q);
+            vec[i] = to_c(result_ifft);
+        }
+
+    } catch (sycl::exception const& e) {
+        std::cerr << "Caught a synchronous SYCL exception: " << e.what() << std::endl;
+        std::exit(1);
+    }
 }

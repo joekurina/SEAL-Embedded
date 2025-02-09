@@ -21,9 +21,14 @@ option(SE_M4_IS_SPHERE "Use Azure Sphere m4" OFF)
 if(SE_BUILD_LOCAL)
     set(CMAKE_C_COMPILER icx)
     set(CMAKE_CXX_COMPILER icpx)
+    set(FPGA_DEVICE "Agilex7")
+    set(EMULATOR_TARGET fpga_emu)
+
+
+
 
     # Enable SYCL and C99 support in C++
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsycl -std=c++17")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DFPGA_EMULATOR -fsycl -std=c++17")
 endif()
 
 # -- This needs to be above the 'project' line
