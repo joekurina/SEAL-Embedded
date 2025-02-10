@@ -47,152 +47,111 @@ namespace {
   constexpr size_t FIXED_LOGN = 12;
 }
 
-//-----------------------------------------------------------------------------
-// Forward-declare the kernel name to reduce name mangling.
-//-----------------------------------------------------------------------------
-class KernelFFT;
-class KernelIFFT;
+// Forward declarations for the RTL functions that operate on an entire array.
+extern "C" void rtl_fft(fft_complex* vec);
+extern "C" void rtl_ifft(fft_complex* vec);
 
 //-----------------------------------------------------------------------------
-// Define SYCL pipe types for streaming FFT data between host and kernel.
+// Public interface function: fft_inpl (using USM)
 //-----------------------------------------------------------------------------
-class IDPipeFFTIn;
-using InputPipeFFT = sycl::ext::intel::experimental::pipe<IDPipeFFTIn, std::complex<double>>;
-
-class IDPipeFFTOut;
-using OutputPipeFFT = sycl::ext::intel::experimental::pipe<IDPipeFFTOut, std::complex<double>>;
-
-class IDPipeIFFTIn;
-using InputPipeIFFT = sycl::ext::intel::experimental::pipe<IDPipeIFFTIn, std::complex<double>>;
-
-class IDPipeIFFTOut;
-using OutputPipeIFFT = sycl::ext::intel::experimental::pipe<IDPipeIFFTOut, std::complex<double>>;
-
-//-----------------------------------------------------------------------------
-// Kernel functor that implements the in-place FFT using SYCL pipes.
-// This kernel reads FIXED_N elements from the input pipe, computes an FFT
-// (using a decimation-in-time Cooley–Tukey algorithm), and writes the result
-// to the output pipe. (The result is in bit-reversed order.)
 //
-// Note: This implementation ignores the precomputed roots (the twiddle
-// factors are computed on the fly).
-//-----------------------------------------------------------------------------
-template <typename PipeIn, typename PipeOut>
-struct FFTKernelFunctor {
-    // use a streaming pipelined invocation interface to minimize hardware
-    // overhead
-    auto get(sycl::ext::oneapi::experimental::properties_tag) {
-        return sycl::ext::oneapi::experimental::properties{
-            sycl::ext::intel::experimental::streaming_interface_accept_downstream_stall, 
-            sycl::ext::intel::experimental::pipelined<1>
-        };
-    }
-    void operator()() const {
-        std::complex<double> fft_input = PipeIn::read();
-        std::complex<double> fft_output = rtl_fft(fft_input);
-        PipeOut::write(fft_output);
-    }
-};
-
-//-----------------------------------------------------------------------------
-// Kernel functor that implements the in-place IFFT using SYCL pipes.
-//-----------------------------------------------------------------------------
-template <typename PipeIn, typename PipeOut>
-struct IFFTKernelFunctor {
-    // use a streaming pipelined invocation interface to minimize hardware
-    // overhead
-    auto get(sycl::ext::oneapi::experimental::properties_tag) {
-        return sycl::ext::oneapi::experimental::properties{
-            sycl::ext::intel::experimental::streaming_interface_accept_downstream_stall, 
-            sycl::ext::intel::experimental::pipelined<1>
-        };
-    }
-    void operator()() const {
-        std::complex<double> ifft_input = PipeIn::read();
-        std::complex<double> ifft_output = rtl_ifft(ifft_input);
-        PipeOut::write(ifft_output);
-    }
-};
-
-//-----------------------------------------------------------------------------
-// Public interface function: fft_inpl
-//
-// This function conforms to the original signature and uses SYCL to perform
-// the FFT. It creates its own SYCL queue, streams the input via a pipe to a
-// kernel that performs the FFT, and then reads the results back.
-//-----------------------------------------------------------------------------
+// This function copies the input data into USM shared memory,
+// launches a kernel that calls rtl_fft on the entire array,
+// and then copies the results back into the original array.
 extern "C" void fft_inpl(fft_complex* vec, size_t n, size_t logn, const fft_complex* roots) {
-    std::complex<double> result_fft;
-    // For this SYCL-based implementation, we require n == FIXED_N and logn == FIXED_LOGN.
+    // This implementation assumes a fixed FFT size.
     assert(n == FIXED_N);
     assert(logn == FIXED_LOGN);
-    (void)roots;
+    (void)roots;  // precomputed roots are ignored
+
+    // Choose a device. Here we use the FPGA emulator selector.
     auto selector = sycl::ext::intel::fpga_emulator_selector_v;
 
     try {
-        sycl::queue q{ selector };
-        auto device = q.get_device();
-        //std::cout << "Running on device: "
-        //        << device.get_info<sycl::info::device::name>().c_str()
-        //        << std::endl;
+        sycl::queue q{selector};
 
-        for (size_t i = 0; i < n; ++i) {
-            std::complex<double> value = from_c(vec[i]);
-            InputPipeFFT::write(q, value);
+        // Allocate USM shared memory for n fft_complex elements.
+        fft_complex* usm_data = sycl::malloc_shared<fft_complex>(n, q);
+        if (usm_data == nullptr) {
+            std::cerr << "Failed to allocate USM shared memory.\n";
+            std::exit(1);
         }
 
-        q.single_task<KernelFFT>(FFTKernelFunctor<InputPipeFFT,OutputPipeFFT>{}).wait();
-
+        // Copy the input data from vec into the USM memory.
         for (size_t i = 0; i < n; ++i) {
-            result_fft = OutputPipeFFT::read(q);
-            vec[i] = to_c(value);
+            usm_data[i] = vec[i];
         }
 
+        // Submit a single-task kernel that performs the FFT on the entire array.
+        q.submit([&](sycl::handler& h) {
+            h.single_task<class FFTKernelUSM>([=]() {
+                // rtl_fft processes the entire array in place.
+                rtl_fft(usm_data);
+            });
+        });
+        q.wait();  // Wait for the kernel to finish.
+
+        // Copy the results from USM memory back to the host array.
+        for (size_t i = 0; i < n; ++i) {
+            vec[i] = usm_data[i];
+        }
+
+        // Free the USM memory.
+        sycl::free(usm_data, q);
     } catch (sycl::exception const& e) {
-        std::cerr << "Caught a synchronous SYCL exception: " << e.what() << std::endl;
+        std::cerr << "Caught a synchronous SYCL exception in fft_inpl: " << e.what() << "\n";
         std::exit(1);
     }
 }
 
 //-----------------------------------------------------------------------------
-// Public interface function: ifft_inpl
-//
-// This function conforms to the original signature and uses SYCL to perform
-// the IFFT. It creates its own SYCL queue, streams the input via a pipe to a
-// kernel that performs the FFT, and then reads the results back.
+// Public interface function: ifft_inpl (using USM)
 //-----------------------------------------------------------------------------
-void ifft_inpl(fft_complex* vec, size_t n, size_t logn, const fft_complex* roots)
-{
-    std::complex<double> result_ifft;
-    // For this SYCL-based implementation, we require n == FIXED_N and logn == FIXED_LOGN.
+//
+// This function copies the input data into USM shared memory,
+// launches a kernel that calls rtl_ifft on the entire array,
+// and then copies the results back into the original array.
+extern "C" void ifft_inpl(fft_complex* vec, size_t n, size_t logn, const fft_complex* roots) {
+    // This implementation assumes a fixed FFT size.
     assert(n == FIXED_N);
     assert(logn == FIXED_LOGN);
-    (void)roots;
+    (void)roots;  // precomputed roots are ignored
+
     auto selector = sycl::ext::intel::fpga_emulator_selector_v;
 
     try {
-        sycl::queue q{ selector };
-        auto device = q.get_device();
-        //std::cout << "Running on device: "
-        //        << device.get_info<sycl::info::device::name>().c_str()
-        //        << std::endl;
+        sycl::queue q{selector};
 
-        for (size_t i = 0; i < n; ++i) {
-            std::complex<double> value = from_c(vec[i]);
-            InputPipeIFFT::write(q, value);
+        // Allocate USM shared memory for n fft_complex elements.
+        fft_complex* usm_data = sycl::malloc_shared<fft_complex>(n, q);
+        if (usm_data == nullptr) {
+            std::cerr << "Failed to allocate USM shared memory.\n";
+            std::exit(1);
         }
 
-        q.single_task<KernelIFFT>(IFFTKernelFunctor<InputPipeIFFT,OutputPipeIFFT>{}).wait();
-
-        // Loops reads the output pipe into the result vector.
-        // Result vector is then converted to a C-type and stored in vec.
+        // Copy the input data from vec into the USM memory.
         for (size_t i = 0; i < n; ++i) {
-            result_ifft = OutputPipeIFFT::read(q);
-            vec[i] = to_c(result_ifft);
+            usm_data[i] = vec[i];
         }
 
+        // Submit a single-task kernel that performs the IFFT on the entire array.
+        q.submit([&](sycl::handler& h) {
+            h.single_task<class IFFTKernelUSM>([=]() {
+                // rtl_ifft processes the entire array in place.
+                rtl_ifft(usm_data);
+            });
+        });
+        q.wait();  // Wait for the kernel to finish.
+
+        // Copy the results from USM memory back to the host array.
+        for (size_t i = 0; i < n; ++i) {
+            vec[i] = usm_data[i];
+        }
+
+        // Free the USM memory.
+        sycl::free(usm_data, q);
     } catch (sycl::exception const& e) {
-        std::cerr << "Caught a synchronous SYCL exception: " << e.what() << std::endl;
+        std::cerr << "Caught a synchronous SYCL exception in ifft_inpl: " << e.what() << "\n";
         std::exit(1);
     }
 }
