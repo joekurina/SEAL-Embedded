@@ -52,52 +52,40 @@ extern "C" void rtl_fft(fft_complex* vec);
 extern "C" void rtl_ifft(fft_complex* vec);
 
 //-----------------------------------------------------------------------------
-// Public interface function: fft_inpl (using USM)
+// Public interface function: fft_inpl (using buffers)
 //-----------------------------------------------------------------------------
 //
-// This function copies the input data into USM shared memory,
-// launches a kernel that calls rtl_fft on the entire array,
-// and then copies the results back into the original array.
+// This function creates a SYCL buffer from the input array, submits a kernel
+// that calls rtl_fft on the entire array via a pointer obtained from a read-write
+// accessor, and then (after kernel completion) the buffer’s destructor updates the
+// host memory with the computed FFT in place.
 extern "C" void fft_inpl(fft_complex* vec, size_t n, size_t logn, const fft_complex* roots) {
-    // This implementation assumes a fixed FFT size.
+    // Enforce fixed size expectations.
     assert(n == FIXED_N);
     assert(logn == FIXED_LOGN);
-    (void)roots;  // precomputed roots are ignored
+    (void)roots;  // precomputed roots are ignored in this implementation
 
-    // Choose a device. Here we use the FPGA emulator selector.
+    // Choose a device; here we use the FPGA emulator selector.
     auto selector = sycl::ext::intel::fpga_emulator_selector_v;
 
     try {
-        sycl::queue q{selector};
+        sycl::queue q{ selector };
 
-        // Allocate USM shared memory for n fft_complex elements.
-        fft_complex* usm_data = sycl::malloc_shared<fft_complex>(n, q);
-        if (usm_data == nullptr) {
-            std::cerr << "Failed to allocate USM shared memory.\n";
-            std::exit(1);
-        }
+        // Create a SYCL buffer wrapping the host memory.
+        sycl::buffer<fft_complex, 1> buf(vec, sycl::range<1>(n));
 
-        // Copy the input data from vec into the USM memory.
-        for (size_t i = 0; i < n; ++i) {
-            usm_data[i] = vec[i];
-        }
-
-        // Submit a single-task kernel that performs the FFT on the entire array.
+        // Submit a kernel that will call rtl_fft on the entire array.
         q.submit([&](sycl::handler& h) {
-            h.single_task<class FFTKernelUSM>([=]() {
-                // rtl_fft processes the entire array in place.
-                rtl_fft(usm_data);
+            // Create an accessor with read-write permissions.
+            auto data = buf.get_access<sycl::access::mode::read_write>(h);
+            h.single_task<class FFTKernelBuffer>([=]() {
+                // Obtain a pointer to the data from the accessor and pass it to rtl_fft.
+                // (This assumes that your implementation of get_pointer() returns a valid device pointer.)
+                rtl_fft(data.get_pointer());
             });
         });
-        q.wait();  // Wait for the kernel to finish.
-
-        // Copy the results from USM memory back to the host array.
-        for (size_t i = 0; i < n; ++i) {
-            vec[i] = usm_data[i];
-        }
-
-        // Free the USM memory.
-        sycl::free(usm_data, q);
+        q.wait();  // Wait for kernel completion.
+        // When the buffer goes out of scope, the host memory (vec) is updated with the results.
     } catch (sycl::exception const& e) {
         std::cerr << "Caught a synchronous SYCL exception in fft_inpl: " << e.what() << "\n";
         std::exit(1);
@@ -105,14 +93,14 @@ extern "C" void fft_inpl(fft_complex* vec, size_t n, size_t logn, const fft_comp
 }
 
 //-----------------------------------------------------------------------------
-// Public interface function: ifft_inpl (using USM)
+// Public interface function: ifft_inpl (using buffers)
 //-----------------------------------------------------------------------------
 //
-// This function copies the input data into USM shared memory,
-// launches a kernel that calls rtl_ifft on the entire array,
-// and then copies the results back into the original array.
+// This function creates a SYCL buffer from the input array, submits a kernel
+// that calls rtl_ifft on the entire array, and then (upon kernel completion)
+// the host memory is updated with the computed IFFT in place.
 extern "C" void ifft_inpl(fft_complex* vec, size_t n, size_t logn, const fft_complex* roots) {
-    // This implementation assumes a fixed FFT size.
+    // Enforce fixed size expectations.
     assert(n == FIXED_N);
     assert(logn == FIXED_LOGN);
     (void)roots;  // precomputed roots are ignored
@@ -120,36 +108,20 @@ extern "C" void ifft_inpl(fft_complex* vec, size_t n, size_t logn, const fft_com
     auto selector = sycl::ext::intel::fpga_emulator_selector_v;
 
     try {
-        sycl::queue q{selector};
+        sycl::queue q{ selector };
 
-        // Allocate USM shared memory for n fft_complex elements.
-        fft_complex* usm_data = sycl::malloc_shared<fft_complex>(n, q);
-        if (usm_data == nullptr) {
-            std::cerr << "Failed to allocate USM shared memory.\n";
-            std::exit(1);
-        }
+        // Create a buffer that wraps the host memory.
+        sycl::buffer<fft_complex, 1> buf(vec, sycl::range<1>(n));
 
-        // Copy the input data from vec into the USM memory.
-        for (size_t i = 0; i < n; ++i) {
-            usm_data[i] = vec[i];
-        }
-
-        // Submit a single-task kernel that performs the IFFT on the entire array.
+        // Submit a kernel that calls rtl_ifft on the entire array.
         q.submit([&](sycl::handler& h) {
-            h.single_task<class IFFTKernelUSM>([=]() {
-                // rtl_ifft processes the entire array in place.
-                rtl_ifft(usm_data);
+            auto data = buf.get_access<sycl::access::mode::read_write>(h);
+            h.single_task<class IFFTKernelBuffer>([=]() {
+                rtl_ifft(data.get_pointer());
             });
         });
-        q.wait();  // Wait for the kernel to finish.
-
-        // Copy the results from USM memory back to the host array.
-        for (size_t i = 0; i < n; ++i) {
-            vec[i] = usm_data[i];
-        }
-
-        // Free the USM memory.
-        sycl::free(usm_data, q);
+        q.wait();
+        // The buffer's destructor ensures that vec is updated with the computed data.
     } catch (sycl::exception const& e) {
         std::cerr << "Caught a synchronous SYCL exception in ifft_inpl: " << e.what() << "\n";
         std::exit(1);
