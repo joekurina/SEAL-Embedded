@@ -1,4 +1,6 @@
 #include <sycl/sycl.hpp>
-#include <complex>
+#include "complex.h"
 
-SYCL_EXTERNAL extern "C" std::complex<double> rtl_fft(std::complex<double> fft_input);
+using fft_complex = double _Complex;
+
+SYCL_EXTERNAL extern "C" fft_complex rtl_fft( fft_input);
