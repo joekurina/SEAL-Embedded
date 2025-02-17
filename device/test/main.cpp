@@ -31,7 +31,7 @@ extern "C" {
     //extern void test_sample_poly_ternary_small(size_t n);
     //extern void test_barrett_reduce(void);
     //extern void test_barrett_reduce_wide(void);
-    //extern void test_poly_mult_ntt(size_t n, size_t nprimes);
+    extern void test_poly_mult_ntt(size_t n, size_t nprimes);
     extern void test_fft(size_t n);
     //extern void test_enc_zero_sym(size_t n, size_t nprimes);
     //extern void test_enc_zero_asym(size_t n, size_t nprimes);
@@ -73,7 +73,7 @@ int main()
     //test_mul_mod();
 
     // Note: This test uses schoolbook multiplication (slow)
-    // test_poly_mult_ntt(n, nprimes);
+    test_poly_mult_ntt(n, nprimes);
 
     test_fft(n);
     //test_enc_zero_sym(n, nprimes);

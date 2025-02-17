@@ -333,8 +333,8 @@ FFT type. For now, we only support "on-the-fly" for the FFT type.
 #define _complex(x, y) __builtin_complex(x, y)
 #else
 #ifdef I
-//#define _complex(x, y) CMPLX(x, y)
-#define _complex(x, y) x + y*I
+#define _complex(x, y) CMPLX(x, y)
+//#define _complex(x, y) x + y*I
 #else
 #define _complex(x, y) x + y*(1.0fi)
 #endif
@@ -344,6 +344,22 @@ FFT type. For now, we only support "on-the-fly" for the FFT type.
     #define se_conj(x) conj(x)
     #define se_creal(x) creal(x)
     #define se_cimag(x) cimag(x)
+#else
+
+#ifdef __cplusplus
+    #include <complex>
+    static inline std::complex<double> se_conj(const std::complex<double>& val)
+    {
+        return std::conj(val);
+    }
+    static inline double se_creal(const std::complex<double>& val)
+    {
+        return val.real();
+    }
+    static inline double se_cimag(const std::complex<double>& val)
+    {
+        return val.imag();
+    }
 #else
 static inline double complex se_conj(double complex val)
 {
@@ -360,6 +376,7 @@ static inline double se_cimag(double complex val)
     double *val_double = (double *)(&val);
     return val_double[1];
 }
+#endif
 #endif
 
 typedef size_t PolySizeType;

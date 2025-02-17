@@ -77,7 +77,7 @@ Note: On the Sphere M4, will not work if this is load-fast for n = 4K and in Deb
 2 = load
 3 = load fast
 */
-#define SE_NTT_TYPE 1
+#define SE_NTT_TYPE 0
 
 /**
 Index map type.
@@ -132,7 +132,7 @@ Uncomment to use.
 Uncomment to use predefine implementation for conj(), creal(), and cimag(). Otherwise,
 treats complex values as two doubles (a real part followed by an imaginary part).
 */
-#define SE_USE_PREDEF_COMPLEX_FUNCS
+//#define SE_USE_PREDEF_COMPLEX_FUNCS
 
 /**
 Sometimes malloc is not available or stack memory allocation is more desireable.
