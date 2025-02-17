@@ -9,7 +9,21 @@ Helpful print functions
 
 #pragma once
 
-#include <complex.h>
+// COMPLEX NUMBER FIX
+// Attempted C++ Compatibility Fix
+// Define a new type for complex doubles and define macros for real and imaginary parts
+#ifdef __cplusplus
+    #include <complex>
+    typedef std::complex<double> ComplexD;
+    #define CREAL(x) std::real(x)
+    #define CIMAG(x) std::imag(x)
+#else
+    #include <complex.h>
+    typedef double complex ComplexD;
+    #define CREAL(x) creal(x)
+    #define CIMAG(x) cimag(x)
+#endif
+
 #include <math.h>     // fabs
 #include <stdbool.h>  // bool
 #include <stdint.h>   // uint64_t
@@ -156,18 +170,18 @@ complex values, if SE_PRINT_SMALL is defined)
 @param[in] a     Array to print
 @param[in] len   Number of elements of 'a' to print
 */
-static inline void print_poly_double_complex(const char *name, const double complex *a,
-                                             PolySizeType len)
+// COMPLEX NUMBER FIX - Changed the type of 'a' to ComplexD and used macros for real and imaginary parts
+static inline void print_poly_double_complex(const char *name, const ComplexD *a, PolySizeType len)
 {
     size_t print_len = get_print_len(len);
     printf("%s : { ", name);
     for (PolySizeType i = 0; i < print_len; i++)
     {
-        if (fabs(se_cimag(a[i])) > 0.0001)
-            printf(SE_PRINT_PREC_CMPLX_STR, se_creal(a[i]), se_cimag(a[i]));
-        else
-            printf(SE_PRINT_PREC_STR, se_creal(a[i]));
-
+        if (fabs(CIMAG(a[i])) > 0.0001) {
+            printf(SE_PRINT_PREC_CMPLX_STR, CREAL(a[i]), CIMAG(a[i]));
+        } else {
+            printf(SE_PRINT_PREC_STR, CREAL(a[i]));
+        }
         print_comma(i, len);
     }
     print_end_string(print_len, len);
@@ -182,17 +196,17 @@ Size_req: 'a' must have at least 'len' double complex values
 @param[in] a     Array to print
 @param[in] len   Number of elements of 'a' to print
 */
-static inline void print_poly_double_complex_full(const char *name, const double complex *a,
-                                                  PolySizeType len)
+// COMPLEX NUMBER FIX - Changed the type of 'a' to ComplexD and used macros for real and imaginary parts
+static inline void print_poly_double_complex_full(const char *name, const ComplexD *a, PolySizeType len)
 {
     printf("%s : { ", name);
     for (PolySizeType i = 0; i < len; i++)
     {
-        if (fabs(se_cimag(a[i])) > 0.0001)
-            printf(SE_PRINT_PREC_CMPLX_STR, se_creal(a[i]), se_cimag(a[i]));
-        else
-            printf(SE_PRINT_PREC_STR, se_creal(a[i]));
-
+        if (fabs(CIMAG(a[i])) > 0.0001) {
+            printf(SE_PRINT_PREC_CMPLX_STR, CREAL(a[i]), CIMAG(a[i]));
+        } else {
+            printf(SE_PRINT_PREC_STR, CREAL(a[i]));
+        }
         print_comma(i, len);
     }
     printf("}\n");

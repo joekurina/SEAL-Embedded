@@ -1,17 +1,20 @@
 #pragma once
 
 #include <stddef.h>      // for size_t
-#include <complex.h>     // for _Complex double
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 /**
- * Define a typedef so code can call `fft_complex` but it’s really `_Complex double`.
+ * Define a typedef so code can call `fft_complex` but it’s really `_Complex double` in C or std::complex<double> in C++.
  * This might help avoid confusion in other parts of the code.
  */
+#ifdef __cplusplus
+#include <complex>
+typedef std::complex<double> fft_complex;
+extern "C" {
+#else
+#include <complex.h>
 typedef _Complex double fft_complex;
+#endif
 
 /**
  * Bit-reversal function if other code calls it. 

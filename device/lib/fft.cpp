@@ -5,13 +5,7 @@
 #include <cassert>
 #include <cmath>
 #include <complex>
-#include <complex.h>
-
-//#include "lib_fft_rtl.hpp"
-//#include "lib_ifft_rtl.hpp"
-
-//#include "exception_handler.hpp"
-#include <stdint.h>
+#include <cstdint>
 
 // Ensure M_PI is defined.
 #ifndef M_PI
@@ -33,63 +27,34 @@ namespace {
     // Now supporting a 4096-point FFT.
     constexpr size_t FIXED_N = 4096;
     constexpr size_t FIXED_LOGN = 12;
-
-    // Conversion helpers between C99 _Complex double and std::complex<double>
-    static inline std::complex<double> from_c(fft_complex c) {
-        return std::complex<double>(__real__ c, __imag__ c);
-    }
-
-    static inline fft_complex to_c(const std::complex<double>& z) {
-        fft_complex tmp = 0;
-        __real__ tmp = z.real();
-        __imag__ tmp = z.imag();
-        return tmp;
-    }
-
-    /**
-     * Define helper functions to represent the imaginary unit
-     * and compute complex conjugate for C style complex numbers.
-     */
-    static inline _Complex double my_I() 
+    
+    static inline std::complex<double> calc_root_otf(size_t k, size_t m)
     {
-        typedef union { double d[2]; _Complex double c; } conv;
-        conv tmp = { { 0.0, 1.0 } };
-        return tmp.c;
-    }
-
-    static inline _Complex double my_conj(_Complex double z) 
-    {
-        return __real__(z) - __imag__(z) * my_I();
-    }
-
-    // Basic root calculation using our imaginary unit helper.
-    static _Complex double calc_root_otf(size_t k, size_t m)
-    {
-        double angle = 2.0 * M_PI * (double)k / (double)m;
-        return cos(angle) + my_I() * sin(angle);
+        double angle = 2.0 * M_PI * static_cast<double>(k) / static_cast<double>(m);
+        return std::complex<double>(cos(angle), sin(angle));
     }
 
     //--------------------------------------------------------------------------
-    // RTL FFT Implementation
+    // SYCL BUFFER FFT Implementation
     //
     // This function performs an in-place FFT on the array `vec` of size `n`
     // using `logn` stages. It uses on-the-fly computation of the twiddle factors.
     //--------------------------------------------------------------------------
-    void fft_rtl(fft_complex* vec, size_t n, size_t logn) {
+    void fft(fft_complex* vec, size_t n, size_t logn) {
         [[intel::fpga_register]] size_t h = 1, tt = n / 2;
         
         #pragma unroll
         for (size_t round = 0; round < FIXED_LOGN; round++, h *= 2, tt /= 2) {
             #pragma unroll 4
             for (size_t j = 0, kstart = 0; j < h; j++, kstart += 2 * tt) {
-                [[intel::fpga_register]] _Complex double s;
+                [[intel::fpga_register]] std::complex<double> s;
                 size_t br = bitrev(h + j, logn);
                 s = calc_root_otf(br, n << 1);
                 
                 #pragma unroll 4
                 for (size_t k = kstart; k < kstart + tt; k++) {
-                    _Complex double u = vec[k];
-                    _Complex double w = vec[k + tt] * s;
+                    std::complex<double> u = vec[k];
+                    std::complex<double> w = vec[k + tt] * s;
                     vec[k]    = u + w;
                     vec[k+tt] = u - w;
                 }
@@ -98,27 +63,27 @@ namespace {
     }
 
     //---------------------------------------------------------------------------
-    // RTL IFFT Implementation
+    // SYCL BUFFER IFFT Implementation
     //
     // Performs an in-place IFFT on the array `vec` of size `n` using `logn`
     // stages. The on-the-fly approach is used, and the twiddle factors are
     // conjugated.
     //---------------------------------------------------------------------------
-    void ifft_rtl(fft_complex* vec, size_t n, size_t logn) {
+    void ifft(fft_complex* vec, size_t n, size_t logn) {
         [[intel::fpga_register]] size_t tt = 1, h = n / 2;
         
         #pragma unroll
         for (size_t round = 0; round < FIXED_LOGN; round++, tt *= 2, h /= 2) {
             #pragma unroll 4
             for (size_t j = 0, kstart = 0; j < h; j++, kstart += 2 * tt) {
-                [[intel::fpga_register]] _Complex double s;
+                [[intel::fpga_register]] std::complex<double> s;
                 size_t br = bitrev(h + j, logn);
-                s = my_conj(calc_root_otf(br, n << 1));
+                s = std::conj(calc_root_otf(br, n << 1));
                 
                 #pragma unroll 4 
                 for (size_t k = kstart; k < kstart + tt; k++) {
-                    _Complex double u = vec[k];
-                    _Complex double w = vec[k + tt];
+                    std::complex<double> u = vec[k];
+                    std::complex<double> w = vec[k + tt];
                     vec[k]    = u + w;
                     vec[k+tt] = (u - w) * s;
                 }
@@ -132,7 +97,7 @@ namespace {
 //-----------------------------------------------------------------------------
 //
 // Wraps the host array `vec` in a SYCL buffer, then submits a kernel that
-// calls `fft_rtl` on the entire array. When the buffer is destructed after
+// calls `fft` on the entire array. When the buffer is destructed after
 // kernel completion, the host memory is updated with the computed FFT.
 extern "C" void fft_inpl(fft_complex* vec, size_t n, size_t logn, const fft_complex* roots) {
     // Enforce fixed-size expectations.
@@ -153,13 +118,13 @@ extern "C" void fft_inpl(fft_complex* vec, size_t n, size_t logn, const fft_comp
         // Create a SYCL buffer that wraps the host array.
         sycl::buffer<fft_complex, 1> buf(vec, sycl::range<1>(n));
 
-        // Submit a kernel that calls fft_rtl on the entire array.
+        // Submit a kernel that calls fft on the entire array.
         q.submit([&](sycl::handler& h) {
             // Create a read-write accessor for the buffer.
             auto data = buf.get_access<sycl::access::mode::read_write>(h);
             h.single_task<class FFTKernelBuffer>([=]() {
-                // Call the RTL FFT implementation on the device.
-                fft_rtl(data.get_pointer(), n, logn);
+                // Call the SYCL BUFFER FFT implementation on the device.
+                fft(data.get_pointer(), n, logn);
             });
         });
         q.wait();  // Wait for kernel completion.
@@ -176,7 +141,7 @@ extern "C" void fft_inpl(fft_complex* vec, size_t n, size_t logn, const fft_comp
 //-----------------------------------------------------------------------------
 //
 // Wraps the host array `vec` in a SYCL buffer, then submits a kernel that
-// calls `ifft_rtl` on the entire array. When the buffer is destructed after
+// calls `ifft` on the entire array. When the buffer is destructed after
 // kernel completion, the host memory is updated with the computed IFFT.
 extern "C" void ifft_inpl(fft_complex* vec, size_t n, size_t logn, const fft_complex* roots) {
     // Enforce fixed-size expectations.
@@ -196,11 +161,11 @@ extern "C" void ifft_inpl(fft_complex* vec, size_t n, size_t logn, const fft_com
         // Create a buffer that wraps the host array.
         sycl::buffer<fft_complex, 1> buf(vec, sycl::range<1>(n));
 
-        // Submit a kernel that calls ifft_rtl on the entire array.
+        // Submit a kernel that calls ifft on the entire array.
         q.submit([&](sycl::handler& h) {
             auto data = buf.get_access<sycl::access::mode::read_write>(h);
             h.single_task<class IFFTKernelBuffer>([=]() {
-                ifft_rtl(data.get_pointer(), n, logn);
+                ifft(data.get_pointer(), n, logn);
             });
         });
         q.wait();

@@ -346,6 +346,7 @@ FFT type. For now, we only support "on-the-fly" for the FFT type.
     #define se_cimag(x) cimag(x)
 #else
 
+// COMPLEX NUMBER FIX
 #ifdef __cplusplus
     #include <complex>
     static inline std::complex<double> se_conj(const std::complex<double>& val)
@@ -361,6 +362,7 @@ FFT type. For now, we only support "on-the-fly" for the FFT type.
         return val.imag();
     }
 #else
+
 static inline double complex se_conj(double complex val)
 {
     double *val_double = (double *)(&val);
@@ -377,6 +379,7 @@ static inline double se_cimag(double complex val)
     return val_double[1];
 }
 #endif
+
 #endif
 
 typedef size_t PolySizeType;

@@ -132,7 +132,7 @@ Uncomment to use.
 Uncomment to use predefine implementation for conj(), creal(), and cimag(). Otherwise,
 treats complex values as two doubles (a real part followed by an imaginary part).
 */
-//#define SE_USE_PREDEF_COMPLEX_FUNCS
+#define SE_USE_PREDEF_COMPLEX_FUNCS
 
 /**
 Sometimes malloc is not available or stack memory allocation is more desireable.

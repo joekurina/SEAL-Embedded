@@ -1,18 +1,8 @@
-//––– Prevent inclusion of the problematic headers –––
-// These macros (which should match the include guard names in the C headers)
-// cause the headers to be skipped in this translation unit.
-#define UTIL_PRINT_H
-#define FIPS202_H
-
-#ifndef SE_DISABLE_TESTING_CAPABILITY
-
 // Now include the rest of your project headers. Because the include guards
 // for util_print.h and fips202.h are already defined, their contents will not
 // be re-included here.
 extern "C" {
 #include "defines.h"
-// (Note: if defines.h itself includes util_print.h or fips202.h, those inclusions
-// will be skipped because of the macros above.)
 #include "ntt.h"
 #include <stdio.h>
 #include "defines.h"
@@ -20,7 +10,7 @@ extern "C" {
 #include "parameters.h"
 #include "polymodarith.h"
 #include "uintmodarith.h"
-//#include "util_print.h"
+#include "util_print.h"
 }
 
 // NTT root helper function declaration
