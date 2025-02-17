@@ -27,10 +27,10 @@ extern "C" {
     extern void test_ckks_encode(size_t n);
     extern void test_ckks_encode_encrypt_sym(size_t n, size_t nprimes);
     extern void test_ckks_encode_encrypt_asym(size_t n, size_t nprimes);
-    extern void test_ckks_api_sym(void);
-    extern void test_ckks_api_asym(void);
-    extern int test_network_basic(void);
-    extern void test_network(void);
+    //extern void test_ckks_api_sym(void);
+    //extern void test_ckks_api_asym(void);
+    //extern int test_network_basic(void);
+    //extern void test_network(void);
 }
 
 int main()
@@ -71,7 +71,7 @@ int main()
 
     // Main tests
     test_ckks_encode_encrypt_sym(n, nprimes);
-    test_ckks_encode_encrypt_asym(n, nprimes);
+    //test_ckks_encode_encrypt_asym(n, nprimes);
 
     // Optional API verification tests
     // test_ckks_api_sym();

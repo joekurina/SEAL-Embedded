@@ -9,6 +9,10 @@ Number Theoretic Transform.
 
 #pragma once
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "defines.h"
 #include "fileops.h"
 #include "parameters.h"
@@ -39,6 +43,8 @@ elements if SE_NTT_ONE_SHOT or SE_NTT_REG is defined.
 */
 void ntt_roots_initialize(const Parms *parms, ZZ *ntt_roots);
 
+
+
 /**
 Negacyclic in-place NTT using the Harvey butterfly.
 
@@ -52,6 +58,7 @@ case, 'ntt_roots' may be null (and will be ignored).
 @param[in,out] vec        Input/output polynomial of n ZZ elements
 */
 void ntt_inpl(const Parms *parms, const ZZ *ntt_roots, ZZ *vec);
+
 
 /**
 Polynomial multiplication for inputs already in NTT form. 'res' and 'a' may share the same starting
@@ -83,3 +90,7 @@ static inline void poly_mult_mod_ntt_form_inpl(ZZ *a, const ZZ *b, size_t n, con
     // -- Values in NTT form can be multiplied component-wise
     poly_pointwise_mul_mod_inpl(a, b, n, mod);
 }
+
+#ifdef __cplusplus
+}
+#endif

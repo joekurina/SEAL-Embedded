@@ -1,7 +1,5 @@
-// Now include the rest of your project headers. Because the include guards
-// for util_print.h and fips202.h are already defined, their contents will not
-// be re-included here.
-extern "C" {
+#include <sycl/sycl.hpp>
+#include <sycl/ext/intel/fpga_extensions.hpp>
 #include "defines.h"
 #include "ntt.h"
 #include <stdio.h>
@@ -11,11 +9,10 @@ extern "C" {
 #include "polymodarith.h"
 #include "uintmodarith.h"
 #include "util_print.h"
-}
 
 // NTT root helper function declaration
 static ZZ get_ntt_root(size_t n, ZZ q);
-
+    
 void ntt_roots_initialize(const Parms *parms, ZZ *ntt_roots)
 {
     SE_UNUSED(parms);
@@ -23,96 +20,81 @@ void ntt_roots_initialize(const Parms *parms, ZZ *ntt_roots)
     return;
 }
 
-void ntt_inpl(const Parms *parms, const ZZ *ntt_roots, ZZ *vec)
-{
-    // This function performs an in-place Number Theoretic Transform (NTT) on the input vector 'vec'.
-    // 'parms' contains parameters for the NTT, including the modulus and coefficient count.
-    // 'ntt_roots' is not used in this implementation (indicated by the SE_UNUSED macro).
-
+extern "C" void ntt_inpl(const Parms *parms, const ZZ *ntt_roots, ZZ *vec) {
+    // Check inputs
     se_assert(parms && parms->curr_modulus && vec);
-    // Asserts that 'parms', 'parms->curr_modulus', and 'vec' are not null pointers.
-    SE_UNUSED(ntt_roots);  // Not used in OTF implementation
-    // Indicates that 'ntt_roots' is not used in this implementation.
+    SE_UNUSED(ntt_roots);  // Not used in this on-the-fly implementation
 
-    size_t n = parms->coeff_count;
-    // 'n' stores the coefficient count, which is the size of the input vector.
+    size_t n    = parms->coeff_count;
     size_t logn = parms->logn;
-    // 'logn' stores the base-2 logarithm of 'n'.
-    Modulus *mod = parms->curr_modulus;
-    // 'mod' points to the current modulus being used for the NTT.
+    const Modulus *mod = parms->curr_modulus;
+    // Get modulus value to be used in the kernel.
+    const ZZ mod_val = mod->value;
+    
+    // Get the primitive root for the NTT.
+    const ZZ root = get_ntt_root(n, mod_val);
 
-    // Get root for NTT
-    ZZ root = get_ntt_root(n, mod->value);
-    // 'root' stores a primitive nth root of unity modulo 'mod->value'.
+    // Select the FPGA emulator device.
+    auto selector = sycl::ext::intel::fpga_emulator_selector_v;
+    try {
+        sycl::queue q{selector};
+        std::cout << "Running NTT on device: "
+                  << q.get_device().get_info<sycl::info::device::name>().c_str()
+                  << std::endl;
 
-    // Perform NTT in scrambled order
-    size_t h = 1;
-    // 'h' represents the size of the sub-arrays being processed. It starts at 1 and doubles in each round.
-    size_t tt = n / 2;
-    // 'tt' represents half the size of the sub-arrays being processed. It starts at n/2 and halves in each round.
+        // Create a SYCL buffer that wraps the input vector.
+        sycl::buffer<ZZ, 1> buf(vec, sycl::range<1>(n));
 
-    for (size_t i = 0; i < logn; i++, h *= 2, tt /= 2)  // rounds
-    {
-        // This outer loop iterates 'logn' times, representing the rounds of the NTT algorithm.
-        // In each iteration, 'h' is doubled and 'tt' is halved.
-        for (size_t j = 0, kstart = 0; j < h; j++, kstart += 2 * tt)  // groups
-        {
-            // This inner loop iterates 'h' times, processing groups of elements within the sub-arrays.
-            // 'kstart' keeps track of the starting index for each group. It increments by 2*'tt' in each iteration.
-            ZZ power = h + j;
-            // 'power' determines the power to which the root of unity is raised.
-
-            // Inline exponentiation
-            ZZ s;
-            // 's' will store the root of unity raised to the power 'power'.
-            if (power == 0) {
-                s = 1;
-            }
-            // If 'power' is 0, 's' is set to 1 (root^0 = 1).
-            else if (power == (1 << (logn - 1))) {
-                s = root;
-            }
-            // If 'power' is 2^(logn-1), 's' is set to the root itself.
-            else {
-                ZZ current_power = root;
-                ZZ product = 0;
-                ZZ result = 1;
-                size_t shift_count = logn - 1;
-                // This block calculates root^power using the square and multiply algorithm.
-                
-                while (true) {
-                    if (power & (ZZ)(1 << shift_count)) {
-                        product = mul_mod(current_power, result, mod);
-                        result = product;
+        q.submit([&](sycl::handler &h) {
+            // Create a read-write accessor.
+            auto data = buf.get_access<sycl::access::mode::read_write>(h);
+            h.single_task<class NTTKernelBuffer>([=]() {
+                size_t hsize = 1;
+                size_t tt = n / 2;
+                // Loop over stages.
+                for (size_t i = 0; i < logn; i++, hsize *= 2, tt /= 2) {
+                    for (size_t j = 0, kstart = 0; j < hsize; j++, kstart += 2 * tt) {
+                        // Compute twiddle factor exponent.
+                        ZZ power = hsize + j;
+                        ZZ s;
+                        if (power == 0) {
+                            s = 1;
+                        } else if (power == (1 << (logn - 1))) {
+                            s = root;
+                        } else {
+                            // Inline exponentiation: calculate s = root^power mod mod_val.
+                            ZZ current_power = root;
+                            ZZ result = 1;
+                            size_t shift_count = logn - 1;
+                            while (true) {
+                                if (power & ((ZZ)1 << shift_count)) {
+                                    result = mul_mod(current_power, result, mod);
+                                }
+                                power &= ~((ZZ)1 << shift_count);
+                                if (power == 0) {
+                                    s = result;
+                                    break;
+                                }
+                                current_power = mul_mod(current_power, current_power, mod);
+                                shift_count--;
+                            }
+                        }
+                        // Process each pair in the current group.
+                        for (size_t k = kstart; k < (kstart + tt); k++) {
+                            ZZ u = data[k];
+                            ZZ v = mul_mod(data[k + tt], s, mod);
+                            data[k]       = add_mod(u, v, mod);
+                            data[k + tt]  = sub_mod(u, v, mod);
+                        }
                     }
-                    // If the current bit of 'power' is 1, multiply 'result' by 'current_power'.
-                    
-                    power &= (ZZ)(~(1 << shift_count));
-                    if (power == 0) {
-                        s = result;
-                        break;
-                    }
-                    // Clear the current bit of 'power'. If 'power' is now 0, the exponentiation is complete.
-                    
-                    product = mul_mod(current_power, current_power, mod);
-                    current_power = product;
-                    shift_count--;
                 }
-            }
-            
-            for (size_t k = kstart; k < (kstart + tt); k++)  // pairs
-            {
-                // This innermost loop iterates 'tt' times, processing pairs of elements within each group.
-                ZZ u = vec[k];
-                // 'u' stores the value of the first element in the pair.
-                ZZ v = mul_mod(vec[k + tt], s, mod);
-                // 'v' stores the value of the second element in the pair, multiplied by the twiddle factor 's'.
-                vec[k] = add_mod(u, v, mod);
-                // The first element is updated with the sum of 'u' and 'v' modulo 'mod'.
-                vec[k + tt] = sub_mod(u, v, mod);
-                // The second element is updated with the difference of 'u' and 'v' modulo 'mod'.
-            }
-        }
+            });
+        });
+        q.wait();
+    } catch (sycl::exception const &e) {
+        std::cerr << "Caught a synchronous SYCL exception in ntt_inpl: "
+                  << e.what() << "\n";
+        std::exit(1);
     }
 }
 
