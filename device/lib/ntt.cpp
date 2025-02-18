@@ -114,7 +114,7 @@ static ZZ get_ntt_root(size_t n, ZZ q)
                 case 1054212097: root = 7305; break;
                 default: {
                     printf("Error! Need first power of root for ntt, n = 4K\n");
-                    //print_zz("Modulus value", q);
+                    print_zz("Modulus value", q);
                     exit(1);
                 }
             }
@@ -130,7 +130,7 @@ static ZZ get_ntt_root(size_t n, ZZ q)
                 case 1056440321: root = 81884; break;
                 default: {
                     printf("Error! Need first power of root for ntt, n = 8K\n");
-                    //print_zz("Modulus value", q);
+                    print_zz("Modulus value", q);
                     exit(1);
                 }
             }
@@ -153,7 +153,7 @@ static ZZ get_ntt_root(size_t n, ZZ q)
                 case 1062535169: root = 2005; break;
                 default: {
                     printf("Error! Need first power of root for ntt, n = 16K\n");
-                    //print_zz("Modulus value", q);
+                    print_zz("Modulus value", q);
                     exit(1);
                 }
             }

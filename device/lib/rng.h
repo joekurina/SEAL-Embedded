@@ -88,7 +88,7 @@ inline void prng_fill_buffer(size_t byte_count, SE_PRNG *prng, void *buffer)
     // Per the fips202.h, the function signature should be as follows:
     // void shake256(uint8_t *output, size_t outlen, const uint8_t *input, size_t inlen)
     // We need to explicitly cast the buffer to uint8_t* and the seed_ext to const uint8_t* to avoid errors 
-    shake256((uint8_t*)buffer, byte_count, (const uint8_t *)&seed_ext[0], SE_PRNG_SEED_BYTE_COUNT + 8);
+    shake256((uint8_t*)buffer, byte_count, &seed_ext[0], SE_PRNG_SEED_BYTE_COUNT + 8);
     
     prng->counter++;
     if (prng->counter == 0)  // overflow!
