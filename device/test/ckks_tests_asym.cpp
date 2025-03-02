@@ -17,7 +17,6 @@
 #include "test_common.h"
 #include "util_print.h"
 
-#if !((defined(SE_ON_SPHERE_M4) || defined(SE_ON_NRF5)) && defined(SE_ENCRYPT_TYPE_SYMMETRIC))
 /**
 Asymmetric test core. If debugging is enabled, throws an error if a test fails.
 
@@ -27,12 +26,6 @@ Asymmetric test core. If debugging is enabled, throws an error if a test fails.
 */
 void test_ckks_asym_base(size_t n, size_t nprimes, bool test_message)
 {
-#ifndef SE_USE_MALLOC
-    se_assert(n == SE_DEGREE_N && nprimes == SE_NPRIMES);  // sanity check
-    if (n != SE_DEGREE_N) n = SE_DEGREE_N;
-    if (nprimes != SE_NPRIMES) nprimes = SE_NPRIMES;
-#endif
-
     Parms parms;
     parms.sample_s      = false;
     parms.is_asymmetric = true;
@@ -44,15 +37,8 @@ void test_ckks_asym_base(size_t n, size_t nprimes, bool test_message)
     // -- Make sure we didn't set this accidentally
     if (!parms.sample_s) se_assert(parms.small_s);
 
-#ifdef SE_USE_MALLOC
     print_ckks_mempool_size(n, 0);
     ZZ *mempool = ckks_mempool_setup_asym(n);
-#else
-    print_ckks_mempool_size();
-    ZZ mempool_local[MEMPOOL_SIZE];
-    memset(&mempool_local, 0, MEMPOOL_SIZE * sizeof(ZZ));
-    ZZ *mempool = &(mempool_local[0]);
-#endif
 
     // -- Get pointers
     SE_PTRS se_ptrs_local;
@@ -77,25 +63,13 @@ void test_ckks_asym_base(size_t n, size_t nprimes, bool test_message)
     }
 
     // -- Additional pointers required for testing.
-#ifdef SE_USE_MALLOC
     ZZ *s            = calloc(n / 16, sizeof(ZZ));
     int8_t *ep_small = calloc(n, sizeof(int8_t));
     ZZ *ntt_s_save   = calloc(n, sizeof(ZZ));  // ntt(expanded(s)) or expanded(s)
     printf("            s addr: %p\n", s);
     printf("     ep_small addr: %p\n", ep_small);
     printf("   ntt_s_save addr: %p\n", ntt_s_save);
-#else
-    ZZ s_vec[SE_DEGREE_N / 16];
-    int8_t ep_small_vec[SE_DEGREE_N];
-    ZZ ntt_s_save_vec[SE_DEGREE_N];  // ntt(expanded(s)) or expanded(s)
-    memset(&ep_small_vec, 0, SE_DEGREE_N * sizeof(ZZ) / 16);
-    memset(&ntt_s_save_vec, 0, SE_DEGREE_N * sizeof(ZZ) / 16);
-    ZZ *s            = &(s_vec[0]);
-    int8_t *ep_small = &(ep_small_vec[0]);
-    ZZ *ntt_s_save   = &(ntt_s_save_vec[0]);  // ntt(expanded(s)) or expanded(s)
-#endif
 
-#if defined(SE_USE_MALLOC) && !(defined(SE_ON_NRF5) || defined(SE_ON_SPHERE_M4))
     // -- This is too much memory for the NRF5, so just allocate as needed later in that case
     ZZ *ntt_ep_save   = calloc(n, sizeof(ZZ));  // ntt(reduced(ep)) or reduced(ep)
     ZZ *ntt_e1_save   = calloc(n, sizeof(ZZ));
@@ -105,20 +79,6 @@ void test_ckks_asym_base(size_t n, size_t nprimes, bool test_message)
     printf("  ntt_e1_save addr: %p\n", ntt_e1_save);
     printf("   ntt_u_save addr: %p\n", ntt_u_save);
     printf("temp_test_mem addr: %p\n", temp_test_mem);
-#elif !defined(SE_USE_MALLOC)
-    ZZ ntt_ep_save_vec[SE_DEGREE_N];          // ntt(reduced(ep)) or reduced(ep)
-    ZZ ntt_e1_save_vec[SE_DEGREE_N];
-    ZZ ntt_u_save_vec[SE_DEGREE_N];
-    ZZ temp_test_mem_vec[4 * SE_DEGREE_N];
-    memset(&ntt_ep_save_vec, 0, SE_DEGREE_N * sizeof(ZZ));
-    memset(&ntt_e1_save_vec, 0, SE_DEGREE_N * sizeof(ZZ));
-    memset(&ntt_u_save_vec, 0, SE_DEGREE_N * sizeof(ZZ));
-    memset(&temp_test_mem_vec, 0, 4 * SE_DEGREE_N * sizeof(ZZ));
-    ZZ *ntt_ep_save   = &(ntt_ep_save_vec[0]);  // ntt(reduced(ep)) or reduced(ep)
-    ZZ *ntt_e1_save   = &(ntt_e1_save_vec[0]);
-    ZZ *ntt_u_save    = &(ntt_u_save_vec[0]);
-    ZZ *temp_test_mem = &(temp_test_mem_vec[0]);
-#endif
 
     SE_PRNG prng;
     SE_PRNG shareable_prng;
@@ -165,11 +125,7 @@ void test_ckks_asym_base(size_t n, size_t nprimes, bool test_message)
         if (!encode_only)
         {
             // -- Sample ep here for generating the public key later
-#ifdef SE_DEBUG_NO_ERRORS
-            memset(ep_small, 0, n * sizeof(int8_t));
-#else
             sample_poly_cbd_generic_prng_16(n, &prng, ep_small);
-#endif
             // print_poly_int8_full("ep_small", ep_small, n);
             // printf("About to init\n");
             ckks_asym_init(&parms, NULL, &prng, conj_vals_int, u, e1);
@@ -191,11 +147,6 @@ void test_ckks_asym_base(size_t n, size_t nprimes, bool test_message)
             const Modulus *mod = parms.curr_modulus;
             print_zz(" ***** Modulus", mod->value);
 
-#ifdef SE_ON_NRF5
-            ZZ *ntt_ep_save = calloc(n, sizeof(ZZ));  // ntt(reduced(ep)) or reduced(ep)
-            ZZ *ntt_e1_save = calloc(n, sizeof(ZZ));
-            ZZ *ntt_u_save  = calloc(n, sizeof(ZZ));
-#endif
             // -- We can't just load pk if we are testing because we need ep to
             //    check the "decryption". Need to generate pk here instead to keep
             //    track of the secret key error term.
@@ -248,25 +199,6 @@ void test_ckks_asym_base(size_t n, size_t nprimes, bool test_message)
             print_poly("ntt(u) * ntt(ep) + ntt(s) * ntt(e1) + ntt(m + e0)", ntt_u_e1_pte, n);
             ZZ *pterr = ntt_u_e1_pte;
 
-#ifdef SE_ON_NRF5
-            if (ntt_ep_save)
-            {
-                free(ntt_ep_save);
-                ntt_ep_save = 0;
-            }
-            if (ntt_e1_save)
-            {
-                free(ntt_e1_save);
-                ntt_e1_save = 0;
-            }
-            if (ntt_u_save)
-            {
-                free(ntt_u_save);
-                ntt_u_save = 0;
-            }
-            ZZ *temp_test_mem = calloc(4 * n, sizeof(ZZ));
-#endif
-
             // -- Check that decrypt gives back the pt+err and decode gives back v.
             // -- Note: This will only decode if values is non-zero. Otherwise, will just decrypt.
             // -- Note: sizeof(max(ntt_roots, ifft_roots)) must be passed as temp memory to undo
@@ -280,20 +212,12 @@ void test_ckks_asym_base(size_t n, size_t nprimes, bool test_message)
             bool ret = ckks_next_prime_asym(&parms, u);
             se_assert(ret || (!ret && i + 1 == parms.nprimes));
 
-#ifdef SE_ON_NRF5
-            if (temp_test_mem)
-            {
-                free(temp_test_mem);
-                temp_test_mem = 0;
-            }
-#endif
         }
 
         // -- Can exit now if rlwe testing only
         if (!test_message) break;
     }
 
-#ifdef SE_USE_MALLOC
     //clang-format off
     if (mempool)
     {
@@ -316,7 +240,7 @@ void test_ckks_asym_base(size_t n, size_t nprimes, bool test_message)
         ntt_s_save = 0;
     }
     //clang-format on
-#if !(defined(SE_ON_NRF5) || defined(SE_ON_SPHERE_M4))
+
     //clang-format off
     if (ntt_ep_save)
     {
@@ -339,8 +263,6 @@ void test_ckks_asym_base(size_t n, size_t nprimes, bool test_message)
         temp_test_mem = 0;
     }
     //clang-format on
-#endif
-#endif
     delete_parameters(&parms);
 }
 
@@ -354,13 +276,9 @@ void test_ckks_encode_encrypt_asym(size_t n, size_t nprimes)
 {
     printf("Beginning tests for ckks encode + asymmetric encrypt...\n");
     bool test_message = 1;
-#ifdef SE_USE_MALLOC
+
     test_ckks_asym_base(n, nprimes, test_message);
-#else
-    SE_UNUSED(n);
-    SE_UNUSED(nprimes);
-    test_ckks_asym_base(SE_DEGREE_N, SE_NPRIMES, test_message);
-#endif
+
 }
 
 /**
@@ -373,24 +291,6 @@ void test_enc_zero_asym(size_t n, size_t nprimes)
 {
     printf("Beginning tests for rlwe asymmetric encryption of 0...\n");
     bool test_message = 0;
-#ifdef SE_USE_MALLOC
     test_ckks_asym_base(n, nprimes, test_message);
-#else
-    SE_UNUSED(n);
-    SE_UNUSED(nprimes);
-    test_ckks_asym_base(SE_DEGREE_N, SE_NPRIMES, test_message);
-#endif
-}
-#else
-void test_ckks_encode_encrypt_asym(void)
-{
-    printf("Error! Did you choose the wrong configuration settings?\n");
-    se_assert(0);
 }
 
-void test_enc_zero_asym(void)
-{
-    printf("Error! Did you choose the wrong configuration settings?\n");
-    se_assert(0);
-}
-#endif
