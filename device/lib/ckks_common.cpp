@@ -11,8 +11,8 @@
  #include <algorithm>
  #include <memory>
  
- #include "ckks_asym.hpp"
- #include "ckks_sym.hpp"
+ #include "ckks_asym.h"
+ #include "ckks_sym.h"
  #include "defines.h"
  #include "fft.h"
  #include "fileops.h"

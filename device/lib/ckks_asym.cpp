@@ -2,7 +2,7 @@
 @file ckks_asym.cpp
 */
 
-#include "ckks_asym.hpp"
+#include "ckks_asym.h"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -10,7 +10,7 @@
 #include <string.h>  // memset
 
 #include "ckks_common.h"
-#include "ckks_sym.hpp"
+#include "ckks_sym.h"
 #include "defines.h"
 #include "fft.h"
 #include "fileops.h"

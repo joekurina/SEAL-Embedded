@@ -3,6 +3,8 @@
 
 /**
 @file ckks_asym.h
+
+Asymmetric CKKS encryption.
 */
 
 #pragma once
@@ -15,6 +17,10 @@
 #include "modulo.h"
 #include "parameters.h"
 #include "rng.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #ifdef SE_USE_MALLOC
 /**
@@ -121,3 +127,7 @@ reduced later).
 @returns              1 on success, 0 on failure (reached end of modulus chain)
 */
 bool ckks_next_prime_asym(Parms *parms, ZZ *u);
+
+#ifdef __cplusplus
+}
+#endif
