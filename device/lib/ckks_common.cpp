@@ -5,15 +5,14 @@
 
  #include "ckks_common.h"
 
- #include <complex>
  #include <cmath>
  #include <cstdio>
  #include <cstdlib>
  #include <algorithm>
  #include <memory>
  
- #include "ckks_asym.h"
- #include "ckks_sym.h"
+ #include "ckks_asym.hpp"
+ #include "ckks_sym.hpp"
  #include "defines.h"
  #include "fft.h"
  #include "fileops.h"
@@ -102,7 +101,7 @@
  }
  
  extern "C" bool ckks_encode_base(const Parms *parms, const flpt *values, size_t values_len,
-                       uint16_t *index_map, double complex *ifft_roots, double complex *conj_vals)
+                       uint16_t *index_map, complex_double *ifft_roots, complex_double *conj_vals)
  {
      se_assert(parms);
      size_t n = parms->coeff_count;
@@ -140,36 +139,49 @@
          se_assert(index1_rev < n);
          se_assert(index2_rev < n);
          
-         // Use C++ std::complex instead of C complex
+         // For C++, handle complex types correctly
+ #ifdef __cplusplus
          double val_real = static_cast<double>(values[i]);
-         std::complex<double> val(val_real, 0.0);
-         
-         // Write to conj_vals using std::complex cast
-         reinterpret_cast<std::complex<double>*>(conj_vals)[index1_rev] = val;
-         reinterpret_cast<std::complex<double>*>(conj_vals)[index2_rev] = val;
+         std::complex<double>* complex_ptr = reinterpret_cast<std::complex<double>*>(conj_vals);
+         complex_ptr[index1_rev] = std::complex<double>(val_real, 0.0);
+         complex_ptr[index2_rev] = std::complex<double>(val_real, 0.0);
+ #else
+         // For C code
+         double val_real = (double)(values[i]);
+         conj_vals[index1_rev] = val_real;
+         conj_vals[index2_rev] = val_real;
+ #endif
          
          // Note: conj_vals[index2_rev] should be set to conj(val), but since we
          // assume values[i] is non-complex, val == conj(val)
      }
  
  #ifdef SE_VERBOSE_TESTING
-     print_poly_double_complex("conj_vals inside", conj_vals, n);
+     print_poly_double_complex("conj_vals inside", (double complex*)conj_vals, n);
  #endif
  
      // Note: ifft_roots argument will be ignored if SE_IFFT_OTF is defined
-     ifft_inpl(conj_vals, n, logn, ifft_roots);
+     ifft_inpl((double complex*)conj_vals, n, logn, (double complex*)ifft_roots);
  
  #ifdef SE_VERBOSE_TESTING
-     print_poly_double_complex("ifft(conj_vals)", conj_vals, n);
+     print_poly_double_complex("ifft(conj_vals)", (double complex*)conj_vals, n);
  
      // Don't combine ifft step of dividing by n with ckks step of scaling by "scale"
      double n_inv = 1.0 / static_cast<double>(n);
      se_assert(n_inv >= 0);
  
+ #ifdef __cplusplus
+     std::complex<double>* complex_ptr = reinterpret_cast<std::complex<double>*>(conj_vals);
      for (size_t i = 0; i < n; i++) {
-         reinterpret_cast<std::complex<double>*>(conj_vals)[i] *= n_inv;
+         complex_ptr[i] *= n_inv;
      }
-     print_poly_double_complex("conj_vals", conj_vals, n);
+ #else
+     for (size_t i = 0; i < n; i++) {
+         conj_vals[i] *= n_inv;
+     }
+ #endif
+ 
+     print_poly_double_complex("conj_vals", (double complex*)conj_vals, n);
  
      n_inv = scale;
  #else
@@ -178,16 +190,24 @@
  #endif
  
      // We no longer need the imaginary part of conj_vals
-     int64_t *conj_vals_int = reinterpret_cast<int64_t*>(conj_vals);
+     int64_t *conj_vals_int = (int64_t *)conj_vals;
      for (size_t i = 0; i < n; i++) {
-         // Using C++ std::complex and std::round
-         std::complex<double>& complex_val = reinterpret_cast<std::complex<double>*>(conj_vals)[i];
-         double coeff = std::round(complex_val.real() * n_inv);
+         // Using C++ std::complex and std::round for C++ code
+ #ifdef __cplusplus
+         std::complex<double>* complex_ptr = reinterpret_cast<std::complex<double>*>(conj_vals);
+         double coeff = std::round(complex_ptr[i].real() * n_inv);
+ #else
+         double coeff = round(creal(conj_vals[i]) * n_inv);
+ #endif
  
          // Check to make sure value can fit in an int64_t
          if (std::fabs(coeff) > MAX_INT_64_DOUBLE) {
              printf("Error! Value at index %zu is possibly too large.\n", i);
-             printf("complex_val.real():     %0.6f\n", complex_val.real());
+ #ifdef __cplusplus
+             printf("complex_val.real():     %0.6f\n", complex_ptr[i].real());
+ #else
+             printf("complex_val.real():     %0.6f\n", creal(conj_vals[i]));
+ #endif
              printf("ninv:                   %0.6f\n", n_inv);
              printf("coeff:                  %0.6f\n", coeff);
              printf("fabs(coeff):            %0.6f\n", std::fabs(coeff));
@@ -210,10 +230,10 @@
   */
  static ZZ reduce_pte_core(int64_t conj_vals_int, const Modulus *mod)
  {
-     uint64_t coeff_abs = static_cast<uint64_t>(std::llabs(conj_vals_int));
+     uint64_t coeff_abs = static_cast<uint64_t>(llabs(conj_vals_int));
      ZZ mask = static_cast<ZZ>(conj_vals_int < 0);
  
-     ZZ *coeff_abs_vec = reinterpret_cast<ZZ*>(&coeff_abs);
+     ZZ *coeff_abs_vec = (ZZ*)(&coeff_abs);
      ZZ coeff_crt = barrett_reduce_64input_32modulus(coeff_abs_vec, mod);
  
      // This is the same as the following, but in constant-time:
@@ -264,26 +284,27 @@
      }
  }
  
- extern "C" void se_print_relative_positions(const ZZ *st, const SE_PTRS *se_ptrs, size_t n, bool sym)
+ #ifdef SE_USE_MALLOC
+ extern "C" void se_print_relative_positions(const ZZ *st, const SE_PTRS *se_ptrs, size_t n, int sym)
  {
      printf("\n\tPrinting relative positions (negative value == does not exist)...\n");
-     printf("\t    conj_vals: %0.4f\n", (reinterpret_cast<const ZZ*>(se_ptrs->conj_vals) - st) / static_cast<double>(n));
-     printf("\tconj_vals_int: %0.4f\n", (reinterpret_cast<const ZZ*>(se_ptrs->conj_vals_int_ptr) - st) / static_cast<double>(n));
+     printf("\t    conj_vals: %0.4f\n", ((const ZZ*)(se_ptrs->conj_vals) - st) / static_cast<double>(n));
+     printf("\tconj_vals_int: %0.4f\n", ((const ZZ*)(se_ptrs->conj_vals_int_ptr) - st) / static_cast<double>(n));
      printf("\t           c1: %0.4f\n", (se_ptrs->c1_ptr - st) / static_cast<double>(n));
      printf("\t           c0: %0.4f\n", (se_ptrs->c0_ptr - st) / static_cast<double>(n));
      printf("\t      ntt_pte: %0.4f\n", (se_ptrs->ntt_pte_ptr - st) / static_cast<double>(n));
-     printf("\t   ifft_roots: %0.4f\n", (reinterpret_cast<const ZZ*>(se_ptrs->ifft_roots) - st) / static_cast<double>(n));
+     printf("\t   ifft_roots: %0.4f\n", ((const ZZ*)(se_ptrs->ifft_roots) - st) / static_cast<double>(n));
      printf("\t    ntt_roots: %0.4f\n", (se_ptrs->ntt_roots_ptr - st) / static_cast<double>(n));
-     printf("\t    index_map: %0.4f\n", (reinterpret_cast<const ZZ*>(se_ptrs->index_map_ptr) - st) / static_cast<double>(n));
+     printf("\t    index_map: %0.4f\n", ((const ZZ*)(se_ptrs->index_map_ptr) - st) / static_cast<double>(n));
      if (!sym) {
-         printf("\t           e1: %0.4f\n", (reinterpret_cast<const ZZ*>(se_ptrs->e1_ptr) - st) / static_cast<double>(n));
+         printf("\t           e1: %0.4f\n", ((const ZZ*)(se_ptrs->e1_ptr) - st) / static_cast<double>(n));
      }
      printf("\t      ternary: %0.4f\n", (se_ptrs->ternary - st) / static_cast<double>(n));
-     printf("\t       values: %0.4f\n", (reinterpret_cast<const ZZ*>(se_ptrs->values) - st) / static_cast<double>(n));
+     printf("\t       values: %0.4f\n", ((const ZZ*)(se_ptrs->values) - st) / static_cast<double>(n));
      printf("\n");
  }
  
- extern "C" void se_print_addresses(const ZZ *mempool, const SE_PTRS *se_ptrs, size_t n, bool sym)
+ extern "C" void se_print_addresses(const ZZ *mempool, const SE_PTRS *se_ptrs, size_t n, int sym)
  {
      size_t mempool_size = sym ? ckks_get_mempool_size_sym(n) : ckks_get_mempool_size_asym(n);
  
@@ -304,7 +325,7 @@
      printf("\n");
  }
  
- extern "C" void print_ckks_mempool_size(size_t n, bool sym)
+ extern "C" void print_ckks_mempool_size(size_t n, int sym)
  {
      se_assert(n >= 16);
      size_t mempool_size = sym ? ckks_get_mempool_size_sym(n) : ckks_get_mempool_size_asym(n);
@@ -339,3 +360,4 @@
          print_str_curr = print_str2;
      }
  }
+ #endif

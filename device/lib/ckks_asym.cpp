@@ -24,7 +24,7 @@
 #include "util_print.h"
 
 #ifdef SE_USE_MALLOC
-size_t ckks_get_mempool_size_asym(size_t degree)
+extern "C" size_t ckks_get_mempool_size_asym(size_t degree)
 {
     se_assert(degree >= 16);
     if (degree == SE_DEGREE_N) return MEMPOOL_SIZE_Asym;
@@ -54,10 +54,10 @@ size_t ckks_get_mempool_size_asym(size_t degree)
     return mempool_size;
 }
 
-ZZ *ckks_mempool_setup_asym(size_t degree)
+extern "C" ZZ *ckks_mempool_setup_asym(size_t degree)
 {
     size_t mempool_size = ckks_get_mempool_size_asym(degree);
-    ZZ *mempool         = calloc(mempool_size, sizeof(ZZ));
+    ZZ *mempool = (ZZ*)calloc(mempool_size, sizeof(ZZ));
     // printf("mempool_size: %zu\n", mempool_size);
     if (!mempool)
     {
@@ -69,41 +69,41 @@ ZZ *ckks_mempool_setup_asym(size_t degree)
 }
 #endif
 
-void ckks_set_ptrs_asym(size_t degree, ZZ *mempool, SE_PTRS *se_ptrs)
+extern "C" void ckks_set_ptrs_asym(size_t degree, ZZ *mempool, SE_PTRS *se_ptrs)
 {
     se_assert(mempool && se_ptrs);
     size_t n = degree;
 
     // -- First, set everything to the set size or 0
-    se_ptrs->conj_vals         = (double complex *)mempool;
+    se_ptrs->conj_vals = (complex_double *)mempool;
     se_ptrs->conj_vals_int_ptr = (int64_t *)mempool;
-    se_ptrs->c1_ptr            = &(mempool[2 * n]);
-    se_ptrs->c0_ptr            = &(mempool[3 * n]);
+    se_ptrs->c1_ptr = &(mempool[2 * n]);
+    se_ptrs->c0_ptr = &(mempool[3 * n]);
 
     // -- In asymmetric mode, ntt_pte_ptr == ntt_u2pte_ptr
-    se_ptrs->ternary       = &(mempool[5 * n + n / 4]);  // default: SE_INDEX_MAP_OTF
-    se_ptrs->ifft_roots    = 0;                          // default: SE_IFFT_OTF
+    se_ptrs->ternary = &(mempool[5 * n + n / 4]);  // default: SE_INDEX_MAP_OTF
+    se_ptrs->ifft_roots = 0;                          // default: SE_IFFT_OTF
     se_ptrs->index_map_ptr = 0;                          // default: SE_INDEX_MAP_OTF
     se_ptrs->ntt_roots_ptr = 0;                          // default: SE_NTT_OTF
-    se_ptrs->values        = 0;
+    se_ptrs->values = 0;
 
     // -- Sizes
-    size_t ifft_roots_size        = 0;
-    size_t ntt_roots_size         = 0;
+    size_t ifft_roots_size = 0;
+    size_t ntt_roots_size = 0;
     size_t index_map_persist_size = 0;
 
     // -- Set ifft_roots based on IFFT type
 #ifndef SE_IFFT_OTF
-    ifft_roots_size     = 4 * n;
-    se_ptrs->ifft_roots = (double complex *)&(mempool[4 * n]);
+    ifft_roots_size = 4 * n;
+    se_ptrs->ifft_roots = (complex_double *)&(mempool[4 * n]);
 #endif
 
     // -- Set ntt_roots based on NTT type
 #if defined(SE_NTT_ONE_SHOT) || defined(SE_NTT_REG)
-    ntt_roots_size         = n;
+    ntt_roots_size = n;
     se_ptrs->ntt_roots_ptr = &(mempool[4 * n]);
 #elif defined(SE_NTT_FAST)
-    ntt_roots_size         = 2 * n;
+    ntt_roots_size = 2 * n;
     se_ptrs->ntt_roots_ptr = &(mempool[4 * n]);
 #endif
 
@@ -121,11 +121,11 @@ void ckks_set_ptrs_asym(size_t degree, ZZ *mempool, SE_PTRS *se_ptrs)
     se_ptrs->ntt_pte_ptr = &(mempool[4 * n + ntt_roots_size]);
 
 #ifdef SE_IFFT_OTF
-    se_ptrs->e1_ptr  = (int8_t *)&(mempool[4 * n + ntt_roots_size + n + index_map_persist_size]);
+    se_ptrs->e1_ptr = (int8_t *)&(mempool[4 * n + ntt_roots_size + n + index_map_persist_size]);
     se_ptrs->ternary = &(mempool[4 * n + ntt_roots_size + n + index_map_persist_size + n / 4]);
 #else
-    se_ptrs->e1_ptr        = (int8_t *)&(mempool[4 * n + ntt_roots_size + n]);
-    se_ptrs->ternary       = &(mempool[4 * n + ntt_roots_size + n + n / 4]);
+    se_ptrs->e1_ptr = (int8_t *)&(mempool[4 * n + ntt_roots_size + n]);
+    se_ptrs->ternary = &(mempool[4 * n + ntt_roots_size + n + n / 4]);
 #endif
 
 #ifdef SE_MEMPOOL_ALLOC_VALUES
@@ -147,13 +147,10 @@ void ckks_set_ptrs_asym(size_t degree, ZZ *mempool, SE_PTRS *se_ptrs)
 #ifdef SE_USE_MALLOC
     se_print_addresses(mempool, se_ptrs, n, 0);
     se_print_relative_positions(mempool, se_ptrs, n, 0);
-#else
-    se_print_addresses(mempool, se_ptrs);
-    se_print_relative_positions(mempool, se_ptrs);
 #endif
 }
 
-void gen_pk(const Parms *parms, ZZ *s_small, ZZ *ntt_roots, uint8_t *seed, SE_PRNG *shareable_prng,
+extern "C" void gen_pk(const Parms *parms, ZZ *s_small, ZZ *ntt_roots, uint8_t *seed, SE_PRNG *shareable_prng,
             ZZ *s_save, int8_t *ep_small, ZZ *ntt_ep, ZZ *pk_c0, ZZ *pk_c1)
 {
     se_assert(parms && shareable_prng);
@@ -167,7 +164,7 @@ void gen_pk(const Parms *parms, ZZ *s_small, ZZ *ntt_roots, uint8_t *seed, SE_PR
                             pk_c1, s_save, 0);
 }
 
-void ckks_asym_init(const Parms *parms, uint8_t *seed, SE_PRNG *prng, int64_t *conj_vals_int, ZZ *u,
+extern "C" void ckks_asym_init(const Parms *parms, uint8_t *seed, SE_PRNG *prng, int64_t *conj_vals_int, ZZ *u,
                     int8_t *e1)
 {
     se_assert(parms && prng);
@@ -199,7 +196,7 @@ void ckks_asym_init(const Parms *parms, uint8_t *seed, SE_PRNG *prng, int64_t *c
 #endif
 }
 
-void ckks_encode_encrypt_asym(const Parms *parms, const int64_t *conj_vals_int, const ZZ *u,
+extern "C" void ckks_encode_encrypt_asym(const Parms *parms, const int64_t *conj_vals_int, const ZZ *u,
                               const int8_t *e1, ZZ *ntt_roots, ZZ *ntt_u_e1_pte, ZZ *ntt_u_save,
                               ZZ *ntt_e1_save, ZZ *pk_c0, ZZ *pk_c1)
 {
@@ -212,7 +209,7 @@ void ckks_encode_encrypt_asym(const Parms *parms, const int64_t *conj_vals_int, 
     // ===============================================================================
     //   Generate ciphertext: (c[1], c[0]) = ([pk1*u + e1]_Rq, [pk0*u + (m + e0)]_Rq)
     // ===============================================================================
-    size_t n     = parms->coeff_count;
+    size_t n = parms->coeff_count;
     Modulus *mod = parms->curr_modulus;
 
     // -------------------------
@@ -282,7 +279,7 @@ void ckks_encode_encrypt_asym(const Parms *parms, const int64_t *conj_vals_int, 
     // print_poly("c0 = pk0*u + m + e0 (ntt)", pk_c0, n);
 }
 
-bool ckks_next_prime_asym(Parms *parms, ZZ *u)
+extern "C" bool ckks_next_prime_asym(Parms *parms, ZZ *u)
 {
     se_assert(parms && parms->is_asymmetric);
     se_assert(u || parms->small_u);

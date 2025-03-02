@@ -5,7 +5,6 @@
 
  #include "ckks_sym.hpp"
 
- #include <complex>
  #include <cstdio>
  #include <cstring>
  #include <algorithm>
@@ -72,8 +71,8 @@
      const size_t n = degree;
  
      // First, set everything to set size or nullptr
-     se_ptrs->conj_vals = reinterpret_cast<double complex*>(mempool);
-     se_ptrs->conj_vals_int_ptr = reinterpret_cast<int64_t*>(mempool);
+     se_ptrs->conj_vals = (complex_double*)(mempool);
+     se_ptrs->conj_vals_int_ptr = (int64_t*)(mempool);
      se_ptrs->c1_ptr = &(mempool[2 * n]);
      se_ptrs->c0_ptr = &(mempool[3 * n]);
      se_ptrs->ntt_pte_ptr = &(mempool[2 * n]);
@@ -95,7 +94,7 @@
      size_t total_block2_size = ifft_roots_size ? ifft_roots_size : ntt_roots_size;
  
      // Set the index map pointer based on the configuration
-     se_ptrs->index_map_ptr = reinterpret_cast<uint16_t*>(&(mempool[4 * n + total_block2_size]));
+     se_ptrs->index_map_ptr = (uint16_t*)(&(mempool[4 * n + total_block2_size]));
      index_map_persist_size = n / 2;
  
      // Set the ternary (secret key) pointer
@@ -103,21 +102,23 @@
      se_ptrs->ternary = &(mempool[4 * n + total_block2_size + index_map_persist_size]);
  
      // Set the values pointer
-     se_ptrs->values = reinterpret_cast<flpt*>(
+     se_ptrs->values = (flpt*)(
          &(mempool[4 * n + total_block2_size + index_map_persist_size + s_persist_size])
      );
  
      // Validate pointer alignments
      size_t address_size = 4;
-     se_assert(reinterpret_cast<ZZ*>(se_ptrs->conj_vals) == 
-               reinterpret_cast<ZZ*>(se_ptrs->conj_vals_int_ptr));
+     se_assert((ZZ*)(se_ptrs->conj_vals) == 
+                (ZZ*)(se_ptrs->conj_vals_int_ptr));
      se_assert(se_ptrs->c1_ptr ==
-               reinterpret_cast<ZZ*>(se_ptrs->conj_vals_int_ptr) + 2 * n * sizeof(ZZ) / address_size);
+                (ZZ*)(se_ptrs->conj_vals_int_ptr) + 2 * n * sizeof(ZZ) / address_size);
      se_assert(se_ptrs->c1_ptr + n * sizeof(ZZ) / address_size == se_ptrs->c0_ptr);
  
+ #ifdef SE_USE_MALLOC
      // Debug: print all addresses
-     se_print_addresses(mempool, se_ptrs, n, true);
-     se_print_relative_positions(mempool, se_ptrs, n, true);
+     se_print_addresses(mempool, se_ptrs, n, 1);
+     se_print_relative_positions(mempool, se_ptrs, n, 1);
+ #endif
  }
  
  extern "C" void ckks_setup_s(const Parms* parms, uint8_t* seed, SE_PRNG* prng, ZZ* s)
@@ -137,7 +138,7 @@
  }
  
  extern "C" void ckks_sym_init(const Parms* parms, uint8_t* share_seed, uint8_t* seed, 
-                     SE_PRNG* shareable_prng, SE_PRNG* prng, int64_t* conj_vals_int)
+                      SE_PRNG* shareable_prng, SE_PRNG* prng, int64_t* conj_vals_int)
  {
      // Each prng must be reset & re-randomized once per encode-encrypt sequence.
      // 'prng_randomize_reset' will set the prng seed to a random value and the prng counter to 0
@@ -155,8 +156,8 @@
  }
  
  extern "C" void ckks_encode_encrypt_sym(const Parms* parms, const int64_t* conj_vals_int,
-                              const int8_t* ep_small, SE_PRNG* shareable_prng, ZZ* s_small,
-                              ZZ* ntt_pte, ZZ* ntt_roots, ZZ* c0_s, ZZ* c1, ZZ* s_save, ZZ* c1_save)
+                               const int8_t* ep_small, SE_PRNG* shareable_prng, ZZ* s_small,
+                               ZZ* ntt_pte, ZZ* ntt_roots, ZZ* c0_s, ZZ* c1, ZZ* s_save, ZZ* c1_save)
  {
      se_assert(parms != nullptr);
  
