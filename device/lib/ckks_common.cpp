@@ -161,7 +161,9 @@
  #endif
  
      // Note: ifft_roots argument will be ignored if SE_IFFT_OTF is defined
-     ifft_inpl((double complex*)conj_vals, n, logn, (double complex*)ifft_roots);
+     // Call ifft_inpl using appropriate types in C++
+     ifft_inpl(reinterpret_cast<fft_complex*>(conj_vals), n, logn, 
+               reinterpret_cast<fft_complex*>(ifft_roots));
  
  #ifdef SE_VERBOSE_TESTING
      print_poly_double_complex("ifft(conj_vals)", (double complex*)conj_vals, n);
