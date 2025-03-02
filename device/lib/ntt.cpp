@@ -20,6 +20,17 @@ void ntt_roots_initialize(const Parms *parms, ZZ *ntt_roots)
     return;
 }
 
+/**
+ * Performs an in-place Number Theoretic Transform (NTT) using SYCL for FPGA.
+ * 
+ * @param parms Parameters containing transform settings
+ * @param ntt_roots Pre-computed NTT roots (unused in this implementation)
+ * @param vec Input/output vector to transform
+ * 
+ * The implementation uses the Cooley-Tukey FFT algorithm adapted for NTT.
+ * Complexity: O(n log n) where n is the transform size
+ */
+
 extern "C" void ntt_inpl(const Parms *parms, const ZZ *ntt_roots, ZZ *vec) {
     // Check inputs
     se_assert(parms && parms->curr_modulus && vec);
