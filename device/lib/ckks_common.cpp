@@ -3,7 +3,7 @@
  * C++ implementation of common CKKS functionality for SEAL-Embedded
  */
 
- #include "ckks_common.h"
+ #include "ckks_common.hpp"
 
  #include <complex>
  #include <cmath>
