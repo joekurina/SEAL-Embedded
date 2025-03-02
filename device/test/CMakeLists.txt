@@ -9,7 +9,7 @@ set(SE_TESTS_SOURCE_FILES ${SE_TESTS_SOURCE_FILES}
 	${CMAKE_CURRENT_LIST_DIR}/uintmodarith_tests.c
 	${CMAKE_CURRENT_LIST_DIR}/uintops_tests.c
 	${CMAKE_CURRENT_LIST_DIR}/ntt_tests.c
-	${CMAKE_CURRENT_LIST_DIR}/ckks_tests_encode.c
+	${CMAKE_CURRENT_LIST_DIR}/ckks_tests_encode.cpp
 	${CMAKE_CURRENT_LIST_DIR}/ckks_tests_common.cpp
 	${CMAKE_CURRENT_LIST_DIR}/ckks_tests_asym.cpp
 	${CMAKE_CURRENT_LIST_DIR}/ckks_tests_sym.cpp
