@@ -3,7 +3,7 @@
  * C++ implementation of CKKS symmetric encryption for SEAL-Embedded
  */
 
- #include "ckks_sym.h"
+ #include "ckks_sym.hpp"
 
  #include <complex>
  #include <cstdio>
@@ -11,7 +11,7 @@
  #include <algorithm>
  #include <memory>
  
- #include "ckks_common.h"
+ #include "ckks_common.hpp"
  #include "defines.h"
  #include "fft.h"
  #include "fileops.h"
