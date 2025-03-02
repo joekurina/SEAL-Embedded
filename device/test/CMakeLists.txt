@@ -11,7 +11,7 @@ set(SE_TESTS_SOURCE_FILES ${SE_TESTS_SOURCE_FILES}
 	${CMAKE_CURRENT_LIST_DIR}/ntt_tests.c
 	${CMAKE_CURRENT_LIST_DIR}/ckks_tests_encode.c
 	${CMAKE_CURRENT_LIST_DIR}/ckks_tests_common.c
-	${CMAKE_CURRENT_LIST_DIR}/ckks_tests_asym.c
+#	${CMAKE_CURRENT_LIST_DIR}/ckks_tests_asym.c
 	${CMAKE_CURRENT_LIST_DIR}/ckks_tests_sym.cpp
 	${CMAKE_CURRENT_LIST_DIR}/api_tests.c
 	${CMAKE_CURRENT_LIST_DIR}/main.cpp

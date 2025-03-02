@@ -2,9 +2,9 @@
 # Licensed under the MIT license.
 
 set(SE_LIB_SOURCE_FILES ${SE_LIB_SOURCE_FILES}
-	${CMAKE_CURRENT_LIST_DIR}/ckks_common.c
-	${CMAKE_CURRENT_LIST_DIR}/ckks_sym.c
-	${CMAKE_CURRENT_LIST_DIR}/ckks_asym.c
+	${CMAKE_CURRENT_LIST_DIR}/ckks_common.cpp
+	${CMAKE_CURRENT_LIST_DIR}/ckks_sym.cpp
+#	${CMAKE_CURRENT_LIST_DIR}/ckks_asym.c
 	${CMAKE_CURRENT_LIST_DIR}/fft.cpp
 	${CMAKE_CURRENT_LIST_DIR}/fileops.c
 	${CMAKE_CURRENT_LIST_DIR}/modulus.c
