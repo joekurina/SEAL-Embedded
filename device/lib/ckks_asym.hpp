@@ -7,7 +7,7 @@
 #include <complex.h>
 #include <stdbool.h>
 
-#include "ckks_common.hpp"
+#include "ckks_common.h"
 #include "defines.h"
 #include "modulo.h"
 #include "parameters.h"

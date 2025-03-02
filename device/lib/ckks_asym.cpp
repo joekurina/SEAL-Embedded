@@ -9,7 +9,7 @@
 #include <stdlib.h>
 #include <string.h>  // memset
 
-#include "ckks_common.hpp"
+#include "ckks_common.h"
 #include "ckks_sym.hpp"
 #include "defines.h"
 #include "fft.h"

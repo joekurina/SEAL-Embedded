@@ -11,7 +11,7 @@
  #include <algorithm>
  #include <memory>
  
- #include "ckks_common.hpp"
+ #include "ckks_common.h"
  #include "defines.h"
  #include "fft.h"
  #include "fileops.h"

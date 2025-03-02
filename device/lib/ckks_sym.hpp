@@ -14,7 +14,7 @@
  #include <memory>
  
  // Include our C++ ckks_common header
- #include "ckks_common.hpp"
+ #include "ckks_common.h"
  
  // Original C includes - maintain compatibility with C code
  extern "C" {
