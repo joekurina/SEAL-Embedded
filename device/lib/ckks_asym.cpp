@@ -4,10 +4,9 @@
 
 #include "ckks_asym.h"
 
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>  // memset
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>  // memset
 
 #include "ckks_common.h"
 #include "ckks_sym.h"
