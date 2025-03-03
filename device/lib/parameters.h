@@ -17,6 +17,10 @@ Functions for creating and modifying a Parameters instance
 #include "defines.h"
 #include "modulo.h"  // Modulus
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
 Storage for encryption parameters.
 
@@ -134,3 +138,7 @@ Sets up SEAL-Embedded parameters object according to requested custom parameters
 */
 void set_custom_parms_ckks(size_t degree, double scale, size_t nprimes, const ZZ *modulus_vals, const ZZ *ratios,
                            Parms *parms);
+
+#ifdef __cplusplus
+}
+#endif

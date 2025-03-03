@@ -17,6 +17,10 @@ Load values from storage.
 void read_from_image(const char *fpath, size_t bytes_expected, void *vec);
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
 Loads the secret key from storage, where the secret key is assumed to be stored in small
 (compressed) form.
@@ -232,4 +236,8 @@ ZZ values.
 @param[out] intt_fast_roots  "Fast" INTT roots
 */
 void load_intt_fast_roots(const Parms *parms, MUMO *intt_fast_roots);
+#endif
+
+#ifdef __cplusplus
+}
 #endif

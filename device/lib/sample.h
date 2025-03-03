@@ -25,6 +25,10 @@ distribution.
 #include "nrf_crypto_rng.h"
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // ----------------------------------------------
 //                   Randomness
 // ----------------------------------------------
@@ -346,3 +350,7 @@ coefficients at a time.
 @param[in,out]  prng  PRNG instance (will update counter)
 */
 void sample_add_poly_cbd_generic_inpl_prng_16(int64_t *poly, PolySizeType n, SE_PRNG *prng);
+
+#ifdef __cplusplus
+}
+#endif
