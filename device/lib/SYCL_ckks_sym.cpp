@@ -148,131 +148,140 @@ public:
 
 // Kernel for reducing int64_t values from a pipe to their representation in ring Z_q
 class PTEReducePipeKernel {
-private:
-    size_t n;
-    uint32_t mod_value;
-    const uint32_t* const_ratio;
-    mutable sycl::buffer<uint32_t, 1> out_acc;
-
-public:
-    PTEReducePipeKernel(size_t n_val, uint32_t mod_val, const uint32_t* const_ratio_val,
-                        sycl::buffer<uint32_t, 1>& out_buf)
-        : n(n_val), mod_value(mod_val), const_ratio(const_ratio_val), out_acc(out_buf) {}
-
-    void operator()(sycl::handler& h) const {
-        auto out = out_acc.get_access<sycl::access::mode::write>(h);
-        size_t kernel_n = n;
-        uint32_t kernel_mod_val = mod_value;
-        const uint32_t* kernel_const_ratio = const_ratio;
-        
-        sycl::stream debug_stream(1024, 256, h);
-        
-        h.single_task([=]() [[intel::kernel_args_restrict]] {
-            debug_stream << "PTEReduce: Starting to read " << kernel_n << " values from pipe\n";
+    private:
+        size_t n;
+        uint32_t mod_value;
+        const uint32_t* const_ratio;
+        mutable sycl::buffer<uint32_t, 1> out_acc;
+    
+    public:
+        PTEReducePipeKernel(size_t n_val, uint32_t mod_val, const uint32_t* const_ratio_val,
+                            sycl::buffer<uint32_t, 1>& out_buf)
+            : n(n_val), mod_value(mod_val), const_ratio(const_ratio_val), out_acc(out_buf) {}
+    
+        void operator()(sycl::handler& h) const {
+            auto out = out_acc.get_access<sycl::access::mode::write>(h);
+            size_t kernel_n = n;
+            uint32_t kernel_mod_val = mod_value;
+            const uint32_t* kernel_const_ratio = const_ratio;
             
-            // First, read all values from the pipe into a local array
-            int64_t local_values[16384]; // Assuming max n is 16384
+            // Larger stream buffer with explicit flushing
+            sycl::stream debug_stream(4096, 1024, h);
             
-            // Read values in smaller chunks to provide progress updates
-            const size_t chunk_size = 500;
-            for (size_t chunk_start = 0; chunk_start < kernel_n; chunk_start += chunk_size) {
-                size_t chunk_end = sycl::min(chunk_start + chunk_size, kernel_n);
+            h.single_task([=]() [[intel::kernel_args_restrict]] {
+                debug_stream << "PTEReduce: Kernel started" << sycl::flush;
                 
-                debug_stream << "PTEReduce: Reading values " << chunk_start + 1 
-                                << " to " << chunk_end << "\n";
+                // First, read just a single value to check pipe connectivity
+                debug_stream << "PTEReduce: Attempting to read first value from pipe" << sycl::flush;
+                int64_t first_value = scale_to_reduce_pipe::read();
+                debug_stream << "PTEReduce: Successfully read first value: " << first_value << sycl::flush;
                 
-                // Read this chunk of values
-                for (size_t i = chunk_start; i < chunk_end; i++) {
+                // Local array for values
+                int64_t local_values[16384];
+                local_values[0] = first_value;
+                
+                // Read remaining values with detailed logging
+                for (size_t i = 1; i < kernel_n; i++) {
+                    // Add more frequent debug for early values and regular checkpoints
+                    if (i < 10 || i % 500 == 0) {
+                        debug_stream << "PTEReduce: About to read value " << i << sycl::flush;
+                    }
+                    
                     local_values[i] = scale_to_reduce_pipe::read();
+                    
+                    if (i < 10 || i % 500 == 0) {
+                        debug_stream << "PTEReduce: Successfully read value " << i << sycl::flush;
+                    }
                 }
                 
-                debug_stream << "PTEReduce: Completed reading values " << chunk_start + 1 
-                                << " to " << chunk_end << "\n";
-            }
-            
-            debug_stream << "PTEReduce: Completed reading all " << kernel_n 
-                            << " values, starting processing\n";
-            
-            // Process the values using the proven Barrett reduction logic
-            for (size_t i = 0; i < kernel_n; i++) {
-                int64_t val = local_values[i];
+                debug_stream << "PTEReduce: All " << kernel_n << " values read successfully, starting processing" << sycl::flush;
                 
-                // Compute absolute value
-                uint64_t coeff_abs = (val < 0) ? static_cast<uint64_t>(-val) : static_cast<uint64_t>(val);
-                
-                // Create mask based on sign (1 if negative, 0 if positive)
-                uint32_t mask = static_cast<uint32_t>(val < 0);
-                
-                // Split 64-bit value into two 32-bit parts for Barrett reduction
-                uint32_t coeff_abs_vec[2];
-                coeff_abs_vec[0] = static_cast<uint32_t>(coeff_abs & 0xFFFFFFFF);
-                coeff_abs_vec[1] = static_cast<uint32_t>((coeff_abs >> 32) & 0xFFFFFFFF);
-                
-                // Implement Barrett reduction (same as your working code)
-                // -- Round 1
-                uint32_t right_hw;
-                {
-                    uint64_t res_temp = (uint64_t)coeff_abs_vec[0] * (uint64_t)kernel_const_ratio[0];
-                    right_hw = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
+                // Process all values with the Barrett reduction
+                for (size_t i = 0; i < kernel_n; i++) {
+                    // Process value with Barrett reduction
+                    int64_t val = local_values[i];
+                    
+                    // Compute absolute value
+                    uint64_t coeff_abs = (val < 0) ? static_cast<uint64_t>(-val) : static_cast<uint64_t>(val);
+                    
+                    // Create mask based on sign (1 if negative, 0 if positive)
+                    uint32_t mask = static_cast<uint32_t>(val < 0);
+                    
+                    // Split 64-bit value into two 32-bit parts for Barrett reduction
+                    uint32_t coeff_abs_vec[2];
+                    coeff_abs_vec[0] = static_cast<uint32_t>(coeff_abs & 0xFFFFFFFF);
+                    coeff_abs_vec[1] = static_cast<uint32_t>((coeff_abs >> 32) & 0xFFFFFFFF);
+                    
+                    // Implement Barrett reduction
+                    // -- Round 1
+                    uint32_t right_hw;
+                    {
+                        uint64_t res_temp = (uint64_t)coeff_abs_vec[0] * (uint64_t)kernel_const_ratio[0];
+                        right_hw = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
+                    }
+                    
+                    uint32_t middle_temp[2];
+                    {
+                        uint64_t res_temp = (uint64_t)coeff_abs_vec[0] * (uint64_t)kernel_const_ratio[1];
+                        middle_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
+                        middle_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
+                    }
+                    
+                    uint32_t middle_lw;
+                    uint32_t middle_lw_carry;
+                    {
+                        middle_lw = right_hw + middle_temp[0];
+                        middle_lw_carry = (uint8_t)(middle_lw < right_hw);
+                    }
+                    
+                    uint32_t middle_hw = middle_temp[1] + middle_lw_carry;
+                    
+                    // -- Round 2
+                    uint32_t middle2_temp[2];
+                    {
+                        uint64_t res_temp = (uint64_t)coeff_abs_vec[1] * (uint64_t)kernel_const_ratio[0];
+                        middle2_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
+                        middle2_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
+                    }
+                    
+                    uint32_t middle2_lw;
+                    uint32_t middle2_lw_carry;
+                    {
+                        middle2_lw = middle_lw + middle2_temp[0];
+                        middle2_lw_carry = (uint8_t)(middle2_lw < middle_lw);
+                    }
+                    
+                    uint32_t middle2_hw = middle2_temp[1] + middle2_lw_carry;
+                    
+                    uint32_t tmp = coeff_abs_vec[1] * kernel_const_ratio[1] + middle_hw + middle2_hw;
+                    
+                    // -- Barrett subtraction
+                    tmp = coeff_abs_vec[0] - tmp * kernel_mod_val;
+                    
+                    // -- Final reduction if needed
+                    uint32_t coeff_crt;
+                    {
+                        int32_t is_2q = (int32_t)(tmp >= kernel_mod_val);
+                        uint32_t tmp_mask = (uint32_t)(-is_2q);
+                        coeff_crt = (uint32_t)(tmp) - (kernel_mod_val & tmp_mask);
+                    }
+                    
+                    // Compute final result based on sign
+                    uint32_t result = ((kernel_mod_val - coeff_crt) & (-mask)) + (coeff_crt & (mask - 1));
+                    
+                    // Store the result
+                    out[i] = result;
+                    
+                    // Log progress at intervals
+                    if (i == 0 || i == kernel_n-1 || i % 1000 == 0) {
+                        debug_stream << "PTEReduce: Processed " << (i+1) << "/" << kernel_n << " values" << sycl::flush;
+                    }
                 }
                 
-                uint32_t middle_temp[2];
-                {
-                    uint64_t res_temp = (uint64_t)coeff_abs_vec[0] * (uint64_t)kernel_const_ratio[1];
-                    middle_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                    middle_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                }
-                
-                uint32_t middle_lw;
-                uint32_t middle_lw_carry;
-                {
-                    middle_lw = right_hw + middle_temp[0];
-                    middle_lw_carry = (uint8_t)(middle_lw < right_hw);
-                }
-                
-                uint32_t middle_hw = middle_temp[1] + middle_lw_carry;
-                
-                // -- Round 2
-                uint32_t middle2_temp[2];
-                {
-                    uint64_t res_temp = (uint64_t)coeff_abs_vec[1] * (uint64_t)kernel_const_ratio[0];
-                    middle2_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                    middle2_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                }
-                
-                uint32_t middle2_lw;
-                uint32_t middle2_lw_carry;
-                {
-                    middle2_lw = middle_lw + middle2_temp[0];
-                    middle2_lw_carry = (uint8_t)(middle2_lw < middle_lw);
-                }
-                
-                uint32_t middle2_hw = middle2_temp[1] + middle2_lw_carry;
-                
-                uint32_t tmp = coeff_abs_vec[1] * kernel_const_ratio[1] + middle_hw + middle2_hw;
-                
-                // -- Barrett subtraction
-                tmp = coeff_abs_vec[0] - tmp * kernel_mod_val;
-                
-                // -- Final reduction if needed
-                uint32_t coeff_crt;
-                {
-                    int32_t is_2q = (int32_t)(tmp >= kernel_mod_val);
-                    uint32_t tmp_mask = (uint32_t)(-is_2q);
-                    coeff_crt = (uint32_t)(tmp) - (kernel_mod_val & tmp_mask);
-                }
-                
-                // Compute final result based on sign
-                uint32_t result = ((kernel_mod_val - coeff_crt) & (-mask)) + (coeff_crt & (mask - 1));
-                
-                // Store the result
-                out[i] = result;
-            }
-            
-            debug_stream << "PTEReduce: Completed processing all " << kernel_n << " values\n";
-        });
-    }
-};
+                debug_stream << "PTEReduce: All processing completed successfully" << sycl::flush;
+            });
+        }
+    };
 
 // NTT Kernel functor class
 class NTTKernel1 {
@@ -1198,18 +1207,19 @@ void pipe_based_processing_pipeline(
             IFFTKernel ifft_kernel(n, logn, encoding_buf, error_samples_buf);
             ifft_kernel(h);
         }));
-        
+
         events.push_back(q.submit([&](sycl::handler& h) {
             std::cout << "Submit: Scale kernel" << std::endl;
             ScaleAndConvertKernel scale_kernel(n, scale);
             scale_kernel(h);
         }));
-        
+
         events.push_back(q.submit([&](sycl::handler& h) {
             std::cout << "Submit: Reduction kernel" << std::endl;
             PTEReducePipeKernel pte_reduce(n, mod_value, const_ratio, ntt_pte_buf);
             pte_reduce(h);
         }));
+
         
         // Wait for all kernels to complete
         std::cout << "Waiting for all kernels to complete..." << std::endl;
