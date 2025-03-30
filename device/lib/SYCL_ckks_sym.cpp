@@ -15,6 +15,13 @@
 #include "SYCL_poly_neg.h"
 #include "SYCL_reduce_pte.h"
 
+// Function prototypes for internal functions used in SYCL_combined_encrypt
+void ntt(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec);
+void ntt_form_poly_mod_mult(uint32_t *a, const uint32_t *b, size_t n, uint32_t mod_value, const uint32_t* const_ratio);
+void poly_negate_mod(uint32_t *p, size_t n, uint32_t mod_value);
+void reduce_pte(const int64_t *conj_vals_int, size_t n, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *out);
+void poly_add_mod(uint32_t *p1, const uint32_t *p2, size_t n, uint32_t mod_value);
+
 // Implementation of the C-compatible function from SYCL_ckks_sym.h
 extern "C" void SYCL_combined_encrypt(
     /* parms related values */
