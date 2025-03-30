@@ -9,6 +9,10 @@
 // Forward declaration of get_ntt_root function
 static uint32_t get_ntt_root(size_t n, uint32_t q);
 
+// Define pipe type for transferring data from IFFT to Scale & Convert
+// We use complex_double as the data type with a buffer size of 1024 elements
+using ifft_to_scale_pipe = sycl::ext::intel::pipe<class ifft_scale_pipe_id, complex_double, 1024>;
+
 // IFFT Kernel functor class
 class IFFTKernel {
 private:
@@ -61,6 +65,11 @@ public:
                     }
                 }
             }
+
+            // Write the results to the pipe
+            for (size_t i = 0; i < kernel_n; i++) {
+                ifft_to_scale_pipe::write(encoding[i]);
+            }
         });
     }
 };
@@ -70,49 +79,67 @@ class ScaleAndConvertKernel {
 private:
     size_t n;
     double scale;
-    mutable sycl::buffer<complex_double, 1> encoding_acc;
     mutable sycl::buffer<int64_t, 1> pt_with_error_acc;
     mutable sycl::buffer<int8_t, 1> error_samples_acc;
 
 public:
     ScaleAndConvertKernel(size_t n_val, double scale_val,
-                          sycl::buffer<complex_double, 1>& encoding_buf,
-                          sycl::buffer<int64_t, 1>& pt_with_error_buf,
-                          sycl::buffer<int8_t, 1>& error_samples_buf)
-        : n(n_val), scale(scale_val), encoding_acc(encoding_buf),
-          pt_with_error_acc(pt_with_error_buf), error_samples_acc(error_samples_buf) {}
-    
+                            sycl::buffer<int64_t, 1>& pt_with_error_buf,
+                            sycl::buffer<int8_t, 1>& error_samples_buf)
+        : n(n_val), scale(scale_val),
+            pt_with_error_acc(pt_with_error_buf), error_samples_acc(error_samples_buf) {}
+
     void operator()(sycl::handler& h) const {
-        // Get access to buffers
-        auto encoding = encoding_acc.get_access<sycl::access::mode::read>(h);
         auto pt_with_error = pt_with_error_acc.get_access<sycl::access::mode::write>(h);
         auto error_samples = error_samples_acc.get_access<sycl::access::mode::read>(h);
-        
-        // Capture necessary variables
         size_t kernel_n = n;
         double kernel_scale = scale;
         
         h.single_task([=]() [[intel::kernel_args_restrict]] {
-            // Calculate scaling factor
             double n_inv = kernel_scale / static_cast<double>(kernel_n);
-            
-            // Scale, convert to integers, and add error in one pass
             for (size_t i = 0; i < kernel_n; i++) {
-                // Get real part of complex value
-                double real_val = encoding[i].real();
-                
-                // Scale and round
+                // Read the next complex value from the pipe instead of from a buffer
+                complex_double val = ifft_to_scale_pipe::read();
+                double real_val = std::real(val);
                 double scaled = sycl::round(real_val * n_inv);
-                
-                // Convert to integer
                 int64_t int_val = static_cast<int64_t>(scaled);
-                
-                // Add error sample
                 pt_with_error[i] = int_val + error_samples[i];
             }
         });
     }
 };
+
+// This function would be called from SYCL_ckks_encode_encrypt_sym
+void pipe_based_ifft_and_scale(
+    double scale,
+    size_t n,
+    size_t logn,
+    sycl::buffer<complex_double, 1>& encoding_buf,
+    sycl::buffer<int64_t, 1>& pt_with_error_buf,
+    sycl::buffer<int8_t, 1>& error_samples_buf
+) {
+    // Create SYCL queue for FPGA
+    sycl::queue q{sycl::ext::intel::fpga_emulator_selector_v};
+    
+    // Print device info
+    std::cout << "Running IFFT and Scale on device: "
+              << q.get_device().get_info<sycl::info::device::name>().c_str()
+              << std::endl;
+    
+    // Execute the kernels
+    q.submit([&](sycl::handler& h) {
+        IFFTKernel ifft_kernel(n, logn, encoding_buf);
+        ifft_kernel(h);
+    });
+
+    q.submit([&](sycl::handler& h) {
+        ScaleAndConvertKernel scale_kernel(n, scale, pt_with_error_buf, error_samples_buf);
+        scale_kernel(h);
+    });
+    
+    // Wait for all kernels to complete
+    q.wait();
+}
 
 // NTT Kernel functor class
 class NTTKernel {
@@ -862,22 +889,9 @@ extern "C" void SYCL_combined_encrypt(
     // Create a SYCL queue using the FPGA emulator selector.
     sycl::queue q{sycl::ext::intel::fpga_emulator_selector_v};
     auto device = q.get_device();
-    std::cout << "Running IFFT on device: "
-              << device.get_info<sycl::info::device::name>().c_str()
-              << std::endl;
-    
+
     // Execute IFFT kernel
-    q.submit([&](sycl::handler &h) {
-        IFFTKernel(n, logn, encoding_buf)(h);
-    }).wait();
-    
-    // Execute Scale and Convert kernel
-    std::cout << "Running Scale and Convert on device: "
-              << device.get_info<sycl::info::device::name>().c_str()
-              << std::endl;
-    q.submit([&](sycl::handler &h) {
-        ScaleAndConvertKernel(n, scale, encoding_buf, pt_with_error_buf, error_samples_buf)(h);
-    }).wait();
+    pipe_based_ifft_and_scale(scale, n, logn, encoding_buf, pt_with_error_buf, error_samples_buf);
     
     // Get host-access pointers for the expanded secret key and uniform poly.
     auto expanded_s_ptr = expanded_s_buf.get_host_access().get_pointer();
