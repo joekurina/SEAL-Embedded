@@ -11,13 +11,13 @@ static uint32_t get_ntt_root(size_t n, uint32_t q);
 
 // Define pipe types for transferring data between kernels
 // Pipe for complex values from IFFT to Scale & Convert
-using ifft_to_scale_pipe = sycl::ext::intel::pipe<class ifft_scale_pipe_id, complex_double, 1024>;
+using ifft_to_scale_pipe = sycl::ext::intel::pipe<class ifft_scale_pipe_id, complex_double, 4096>;
 
 // Pipe for error samples from IFFT to Scale & Convert
-using error_to_scale_pipe = sycl::ext::intel::pipe<class error_scale_pipe_id, int8_t, 1024>;
+using error_to_scale_pipe = sycl::ext::intel::pipe<class error_scale_pipe_id, int8_t, 4096>;
 
 // Pipe for plaintext with error from Scale & Convert to Reduce
-using scale_to_reduce_pipe = sycl::ext::intel::pipe<class scale_reduce_pipe_id, int64_t, 1024>;
+using scale_to_reduce_pipe = sycl::ext::intel::pipe<class scale_reduce_pipe_id, int64_t, 4096>;
 
 // IFFT Kernel functor class
 class IFFTKernel {
@@ -1120,7 +1120,8 @@ void poly_add_mod(uint32_t *p1, const uint32_t *p2, size_t n, uint32_t mod_value
     }
 }
 
-// Function to run all kernels in parallel with pipe-based data transfer
+
+// Function to run all kernels with proper data flow using pipe-based data transfer
 void pipe_based_processing_pipeline(
     double scale,
     size_t n,
@@ -1139,27 +1140,39 @@ void pipe_based_processing_pipeline(
               << q.get_device().get_info<sycl::info::device::name>().c_str()
               << std::endl;
     
-    // Submit all kernels without waiting between submissions
-    // This allows them to potentially execute in parallel
-    auto ifft_event = q.submit([&](sycl::handler& h) {
-        IFFTKernel ifft_kernel(n, logn, encoding_buf, error_samples_buf);
-        ifft_kernel(h);
-    });
-
-    auto scale_event = q.submit([&](sycl::handler& h) {
-        ScaleAndConvertKernel scale_kernel(n, scale);
-        scale_kernel(h);
-    });
-    
-    auto reduce_event = q.submit([&](sycl::handler& h) {
-        ReducePTEPipeKernel reduce_kernel(n, mod_value, const_ratio, ntt_pte_buf);
-        reduce_kernel(h);
-    });
-    
-    // Wait for all kernels to complete
-    sycl::event::wait_and_throw({ifft_event, scale_event, reduce_event});
+    try {
+        // First submit and wait for the IFFT kernel to complete
+        std::cout << "Starting IFFT kernel, processing " << n << " elements" << std::endl;
+        auto ifft_event = q.submit([&](sycl::handler& h) {
+            IFFTKernel ifft_kernel(n, logn, encoding_buf, error_samples_buf);
+            ifft_kernel(h);
+        });
+        ifft_event.wait();
+        std::cout << "IFFT kernel completed" << std::endl;
+        
+        // Then submit and wait for the ScaleAndConvert kernel
+        std::cout << "Starting ScaleAndConvert kernel, processing " << n << " elements" << std::endl;
+        auto scale_event = q.submit([&](sycl::handler& h) {
+            ScaleAndConvertKernel scale_kernel(n, scale);
+            scale_kernel(h);
+        });
+        scale_event.wait();
+        std::cout << "ScaleAndConvert kernel completed" << std::endl;
+        
+        // Finally submit and wait for the ReducePTE kernel
+        std::cout << "Starting ReducePTE kernel, processing " << n << " elements" << std::endl;
+        auto reduce_event = q.submit([&](sycl::handler& h) {
+            ReducePTEPipeKernel reduce_kernel(n, mod_value, const_ratio, ntt_pte_buf);
+            reduce_kernel(h);
+        });
+        reduce_event.wait();
+        std::cout << "ReducePTE kernel completed" << std::endl;
+        
+    } catch (sycl::exception const &e) {
+        std::cerr << "SYCL exception caught in pipeline: " << e.what() << std::endl;
+        throw; // Re-throw to caller
+    }
 }
-
 // Implementation of the C-compatible function
 extern "C" void SYCL_combined_encrypt(
     /* parms related values */
