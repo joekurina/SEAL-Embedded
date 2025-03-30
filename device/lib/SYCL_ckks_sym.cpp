@@ -103,31 +103,51 @@ public:
         size_t kernel_n = n;
         double kernel_scale = scale;
         
+        // Create a stream for debug output
+        sycl::stream out(1024, 256, h);
+        
         h.single_task([=]() [[intel::kernel_args_restrict]] {
+            // Reduce debug output to minimize corruption
+            size_t error_samples_read = 0;
+            size_t values_written = 0;
+            
             // Read all error samples first into a local array
-            int8_t error_values[16384]; // Assuming max n is 16384, adjust if needed
+            int8_t error_values[16384];
             for (size_t i = 0; i < kernel_n; i++) {
                 error_values[i] = error_to_scale_pipe::read();
+                error_samples_read++;
+                
+                // Only print at the end
+                if (i == kernel_n - 1) {
+                    out << "Scale: Read all " << kernel_n << " error samples\n";
+                }
             }
             
             double n_inv = kernel_scale / static_cast<double>(kernel_n);
             for (size_t i = 0; i < kernel_n; i++) {
                 // Read the next complex value from the pipe
                 complex_double val = ifft_to_scale_pipe::read();
+                
                 double real_val = std::real(val);
                 double scaled = sycl::round(real_val * n_inv);
                 int64_t int_val = static_cast<int64_t>(scaled);
                 
-                // Instead of writing to a buffer, write to the next pipe
+                // Write to the next pipe
                 int64_t pt_with_error_val = int_val + error_values[i];
                 scale_to_reduce_pipe::write(pt_with_error_val);
+                values_written++;
+                
+                // Print progress less frequently
+                if (i == 1000 || i == 2000 || i == 3000 || i == kernel_n - 1) {
+                    out << "Scale: Written " << values_written << "/" << kernel_n << " values\n";
+                }
             }
         });
     }
 };
 
-// Kernel for modular reduction from a pipe input
-class ReducePTEPipeKernel {
+// Kernel for reducing int64_t values from a pipe to their representation in ring Z_q
+class PTEReducePipeKernel {
 private:
     size_t n;
     uint32_t mod_value;
@@ -135,8 +155,8 @@ private:
     mutable sycl::buffer<uint32_t, 1> out_acc;
 
 public:
-    ReducePTEPipeKernel(size_t n_val, uint32_t mod_val, const uint32_t* const_ratio_val,
-                    sycl::buffer<uint32_t, 1>& out_buf)
+    PTEReducePipeKernel(size_t n_val, uint32_t mod_val, const uint32_t* const_ratio_val,
+                        sycl::buffer<uint32_t, 1>& out_buf)
         : n(n_val), mod_value(mod_val), const_ratio(const_ratio_val), out_acc(out_buf) {}
 
     void operator()(sycl::handler& h) const {
@@ -145,13 +165,39 @@ public:
         uint32_t kernel_mod_val = mod_value;
         const uint32_t* kernel_const_ratio = const_ratio;
         
+        sycl::stream debug_stream(1024, 256, h);
+        
         h.single_task([=]() [[intel::kernel_args_restrict]] {
-            // Process each coefficient
-            for (size_t i = 0; i < kernel_n; i++) {
-                // Read the plaintext with error from the pipe
-                int64_t val = scale_to_reduce_pipe::read();
+            debug_stream << "PTEReduce: Starting to read " << kernel_n << " values from pipe\n";
+            
+            // First, read all values from the pipe into a local array
+            int64_t local_values[16384]; // Assuming max n is 16384
+            
+            // Read values in smaller chunks to provide progress updates
+            const size_t chunk_size = 500;
+            for (size_t chunk_start = 0; chunk_start < kernel_n; chunk_start += chunk_size) {
+                size_t chunk_end = sycl::min(chunk_start + chunk_size, kernel_n);
                 
-                // Calculate absolute value
+                debug_stream << "PTEReduce: Reading values " << chunk_start + 1 
+                                << " to " << chunk_end << "\n";
+                
+                // Read this chunk of values
+                for (size_t i = chunk_start; i < chunk_end; i++) {
+                    local_values[i] = scale_to_reduce_pipe::read();
+                }
+                
+                debug_stream << "PTEReduce: Completed reading values " << chunk_start + 1 
+                                << " to " << chunk_end << "\n";
+            }
+            
+            debug_stream << "PTEReduce: Completed reading all " << kernel_n 
+                            << " values, starting processing\n";
+            
+            // Process the values using the proven Barrett reduction logic
+            for (size_t i = 0; i < kernel_n; i++) {
+                int64_t val = local_values[i];
+                
+                // Compute absolute value
                 uint64_t coeff_abs = (val < 0) ? static_cast<uint64_t>(-val) : static_cast<uint64_t>(val);
                 
                 // Create mask based on sign (1 if negative, 0 if positive)
@@ -162,7 +208,7 @@ public:
                 coeff_abs_vec[0] = static_cast<uint32_t>(coeff_abs & 0xFFFFFFFF);
                 coeff_abs_vec[1] = static_cast<uint32_t>((coeff_abs >> 32) & 0xFFFFFFFF);
                 
-                // Implement Barrett reduction
+                // Implement Barrett reduction (same as your working code)
                 // -- Round 1
                 uint32_t right_hw;
                 {
@@ -217,12 +263,13 @@ public:
                 }
                 
                 // Compute final result based on sign
-                // If negative: mod_val - coeff_crt, otherwise: coeff_crt
                 uint32_t result = ((kernel_mod_val - coeff_crt) & (-mask)) + (coeff_crt & (mask - 1));
                 
                 // Store the result
                 out[i] = result;
             }
+            
+            debug_stream << "PTEReduce: Completed processing all " << kernel_n << " values\n";
         });
     }
 };
@@ -1120,7 +1167,6 @@ void poly_add_mod(uint32_t *p1, const uint32_t *p2, size_t n, uint32_t mod_value
     }
 }
 
-
 // Function to run all kernels with proper data flow using pipe-based data transfer
 void pipe_based_processing_pipeline(
     double scale,
@@ -1135,62 +1181,72 @@ void pipe_based_processing_pipeline(
     // Create SYCL queue for FPGA
     sycl::queue q{sycl::ext::intel::fpga_emulator_selector_v};
     
-    // Print device info
     std::cout << "Running pipeline kernels in parallel on device: "
               << q.get_device().get_info<sycl::info::device::name>().c_str()
               << std::endl;
     
     try {
-        // First submit and wait for the IFFT kernel to complete
-        std::cout << "Starting IFFT kernel, processing " << n << " elements" << std::endl;
-        auto ifft_event = q.submit([&](sycl::handler& h) {
+        // Submit all kernels concurrently
+        std::cout << "Submitting all kernels concurrently..." << std::endl;
+        
+        // Create a vector to store events
+        std::vector<sycl::event> events;
+        
+        // Submit all kernels WITHOUT waiting between submissions
+        events.push_back(q.submit([&](sycl::handler& h) {
+            std::cout << "Submit: IFFT kernel" << std::endl;
             IFFTKernel ifft_kernel(n, logn, encoding_buf, error_samples_buf);
             ifft_kernel(h);
-        });
-        ifft_event.wait();
-        std::cout << "IFFT kernel completed" << std::endl;
+        }));
         
-        // Then submit and wait for the ScaleAndConvert kernel
-        std::cout << "Starting ScaleAndConvert kernel, processing " << n << " elements" << std::endl;
-        auto scale_event = q.submit([&](sycl::handler& h) {
+        events.push_back(q.submit([&](sycl::handler& h) {
+            std::cout << "Submit: Scale kernel" << std::endl;
             ScaleAndConvertKernel scale_kernel(n, scale);
             scale_kernel(h);
-        });
-        scale_event.wait();
-        std::cout << "ScaleAndConvert kernel completed" << std::endl;
+        }));
         
-        // Finally submit and wait for the ReducePTE kernel
-        std::cout << "Starting ReducePTE kernel, processing " << n << " elements" << std::endl;
-        auto reduce_event = q.submit([&](sycl::handler& h) {
-            ReducePTEPipeKernel reduce_kernel(n, mod_value, const_ratio, ntt_pte_buf);
-            reduce_kernel(h);
-        });
-        reduce_event.wait();
-        std::cout << "ReducePTE kernel completed" << std::endl;
+        events.push_back(q.submit([&](sycl::handler& h) {
+            std::cout << "Submit: Reduction kernel" << std::endl;
+            PTEReducePipeKernel pte_reduce(n, mod_value, const_ratio, ntt_pte_buf);
+            pte_reduce(h);
+        }));
+        
+        // Wait for all kernels to complete
+        std::cout << "Waiting for all kernels to complete..." << std::endl;
+        
+        // Loop through each event and wait for completion
+        for (size_t i = 0; i < events.size(); i++) {
+            std::cout << "Waiting for kernel #" << (i+1) << std::endl;
+            events[i].wait();
+            std::cout << "Kernel #" << (i+1) << " completed" << std::endl;
+        }
+        
+        std::cout << "All pipeline kernels completed successfully" << std::endl;
         
     } catch (sycl::exception const &e) {
         std::cerr << "SYCL exception caught in pipeline: " << e.what() << std::endl;
         throw; // Re-throw to caller
     }
 }
+
 // Implementation of the C-compatible function
 extern "C" void SYCL_combined_encrypt(
     /* parms related values */
-    size_t n,                       // Polynomial degree
-    size_t logn,                    // Log of polynomial degree
-    double scale,                   // Scale value
-    uint32_t mod_value,             // Modulus value (q)
-    const uint32_t* const_ratio,    // Const ratio for Barrett reduction
-    complex_double* encoding_buffer, // Buffer for encoding
-    uint32_t* expanded_s,           // Expanded secret key
-    uint32_t* uniform_poly,         // Uniform polynomial (c1)
-    int8_t* error_samples,          // Error samples
-    int64_t* pt_with_error,         // Plaintext + error
-    uint32_t* ntt_pte,              // Scratch space for NTT
-    uint32_t* c0_s,                 // Output: 1st ciphertext component
-    uint32_t* c1,                   // Output: 2nd ciphertext component
-    uint32_t* s_save,               // Optional: Save expanded s (for testing)
-    uint32_t* c1_save               // Optional: Save c1 (for testing)
+    size_t n,                           // Polynomial degree
+    size_t logn,                        // Log of polynomial degree
+    double scale,                       // Scale value
+    uint32_t mod_value,                 // Modulus value (q)
+    const uint32_t* const_ratio,        // Const ratio for Barrett reduction
+    complex_double* encoding_buffer,    // Buffer for encoding
+    uint32_t* expanded_s,               // Expanded secret key
+    uint32_t* uniform_poly,             // Uniform polynomial (c1)
+    int8_t* error_samples,              // Error samples
+    int64_t* pt_with_error,             // Plaintext + error
+    uint32_t* ntt_pte,                  // Scratch space for NTT
+    uint32_t* c0_s,                     // Output: 1st ciphertext component
+    uint32_t* c1,                       // Output: 2nd ciphertext component
+    uint32_t* s_save,                   // Optional: Save expanded s (for testing)
+    uint32_t* c1_save                   // Optional: Save c1 (for testing)
 ) {
     // Create SYCL buffers from the input pointers.
     sycl::buffer<complex_double, 1> encoding_buf(encoding_buffer, sycl::range<1>(n));
