@@ -6,888 +6,14 @@
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
-// IFFT Kernel functor class
-class IFFTKernel {
-private:
-    size_t n;
-    size_t logn;
-    mutable sycl::buffer<complex_double, 1> encoding_acc;
-
-public:
-    IFFTKernel(size_t n_val, size_t logn_val, sycl::buffer<complex_double, 1>& encoding_buf)
-        : n(n_val), logn(logn_val), encoding_acc(encoding_buf) {}
-    
-    void operator()(sycl::handler& h) const {
-        // Get access to the buffer
-        auto encoding = encoding_acc.get_access<sycl::access::mode::read_write>(h);
-        
-        // Capture necessary variables
-        size_t kernel_n = n;
-        size_t kernel_logn = logn;
-        
-        h.single_task([=]() [[intel::kernel_args_restrict]] {
-            // Bit-reversal function
-            auto bitrev = [](size_t input, size_t numbits) -> size_t {
-                size_t t = (((input & 0xaaaa) >> 1) | ((input & 0x5555) << 1));
-                t        = (((t & 0xcccc) >> 2) | ((t & 0x3333) << 2));
-                t        = (((t & 0xf0f0) >> 4) | ((t & 0x0f0f) << 4));
-                t        = (((t & 0xff00) >> 8) | ((t & 0x00ff) << 8));
-                return (numbits == 0) ? 0 : (t >> (16 - numbits));
-            };
-            
-            // Root calculation function
-            auto calc_root_otf = [](size_t k, size_t m) -> complex_double {
-                double angle = 2.0 * M_PI * static_cast<double>(k) / static_cast<double>(m);
-                return complex_double(sycl::cos(angle), sycl::sin(angle));
-            };
-            
-            // IFFT implementation
-            size_t tt = 1, h = kernel_n / 2;
-            
-            for (size_t round = 0; round < kernel_logn; round++, tt *= 2, h /= 2) {
-                for (size_t j = 0, kstart = 0; j < h; j++, kstart += 2 * tt) {
-                    complex_double s;
-                    size_t br = bitrev(h + j, kernel_logn);
-                    s = std::conj(calc_root_otf(br, kernel_n << 1));
-                    
-                    for (size_t k = kstart; k < kstart + tt; k++) {
-                        complex_double u = encoding[k];
-                        complex_double v = encoding[k + tt];
-                        encoding[k]      = u + v;
-                        encoding[k + tt] = (u - v) * s;
-                    }
-                }
-            }
-        });
-    }
-};
-
-// Kernel for scaling and conversion to integers, then adding the error samples to the encoded values
-class ScaleAndConvertKernel {
-private:
-    size_t n;
-    double scale;
-    mutable sycl::buffer<complex_double, 1> encoding_acc;
-    mutable sycl::buffer<int64_t, 1> pt_with_error_acc;
-    mutable sycl::buffer<int8_t, 1> error_samples_acc;
-
-public:
-    ScaleAndConvertKernel(size_t n_val, double scale_val,
-                          sycl::buffer<complex_double, 1>& encoding_buf,
-                          sycl::buffer<int64_t, 1>& pt_with_error_buf,
-                          sycl::buffer<int8_t, 1>& error_samples_buf)
-        : n(n_val), scale(scale_val), encoding_acc(encoding_buf),
-          pt_with_error_acc(pt_with_error_buf), error_samples_acc(error_samples_buf) {}
-    
-    void operator()(sycl::handler& h) const {
-        // Get access to buffers
-        auto encoding = encoding_acc.get_access<sycl::access::mode::read>(h);
-        auto pt_with_error = pt_with_error_acc.get_access<sycl::access::mode::write>(h);
-        auto error_samples = error_samples_acc.get_access<sycl::access::mode::read>(h);
-        
-        // Capture necessary variables
-        size_t kernel_n = n;
-        double kernel_scale = scale;
-        
-        h.single_task([=]() [[intel::kernel_args_restrict]] {
-            // Calculate scaling factor
-            double n_inv = kernel_scale / static_cast<double>(kernel_n);
-            
-            // Scale, convert to integers, and add error in one pass
-            for (size_t i = 0; i < kernel_n; i++) {
-                // Get real part of complex value
-                double real_val = encoding[i].real();
-                
-                // Scale and round
-                double scaled = sycl::round(real_val * n_inv);
-                
-                // Convert to integer
-                int64_t int_val = static_cast<int64_t>(scaled);
-                
-                // Add error sample
-                pt_with_error[i] = int_val + error_samples[i];
-            }
-        });
-    }
-};
-
-// NTT Kernel functor class
-class NTTKernel {
-private:
-    size_t n;
-    size_t logn;
-    uint32_t mod_value;
-    const uint32_t* const_ratio;
-    mutable sycl::buffer<uint32_t, 1> vec_acc;
-
-    // Internal function to get the NTT root
-    uint32_t get_root() const {
-        uint32_t root;
-        switch (n) {
-            case 4096:
-                switch (mod_value) {
-                    case 134012929: root = 7470; break;
-                    case 134111233: root = 3856; break;
-                    case 134176769: root = 24149; break;
-                    case 1053818881: root = 503422; break;
-                    case 1054015489: root = 16768; break;
-                    case 1054212097: root = 7305; break;
-                    default: {
-                        printf("Error! Need first power of root for ntt, n = 4K\n");
-                        printf("Modulus value = %d", mod_value);
-                        exit(1);
-                    }
-                }
-                break;
-            case 8192:
-                switch (mod_value) {
-                    case 1053818881: root = 374229; break;
-                    case 1054015489: root = 123363; break;
-                    case 1054212097: root = 79941; break;
-                    case 1055260673: root = 38869; break;
-                    case 1056178177: root = 162146; break;
-                    case 1056440321: root = 81884; break;
-                    default: {
-                        printf("Error! Need first power of root for ntt, n = 8K\n");
-                        printf("Modulus value = %d", mod_value);
-                        exit(1);
-                    }
-                }
-                break;
-            case 16384:
-                switch (mod_value) {
-                    case 1053818881: root = 13040; break;
-                    case 1054015489: root = 507; break;
-                    case 1054212097: root = 1595; break;
-                    case 1055260673: root = 68507; break;
-                    case 1056178177: root = 3073; break;
-                    case 1056440321: root = 6854; break;
-                    case 1058209793: root = 44467; break;
-                    case 1060175873: root = 16117; break;
-                    case 1060700161: root = 27607; break;
-                    case 1060765697: root = 222391; break;
-                    case 1061093377: root = 105471; break;
-                    case 1062469633: root = 310222; break;
-                    case 1062535169: root = 2005; break;
-                    default: {
-                        printf("Error! Need first power of root for ntt, n = 16K\n");
-                        printf("Modulus value = %d", mod_value);
-                        exit(1);
-                    }
-                }
-                break;
-            default: {
-                printf("Error! Need first power of root for ntt\n");
-                printf("Modulus value = %d", mod_value);
-                exit(1);
-            }
-        }
-        return root;
-    }
-
-public:
-    NTTKernel(size_t n_val, size_t logn_val, uint32_t mod_val, 
-                const uint32_t* const_ratio_val, sycl::buffer<uint32_t, 1>& vec_buf)
-        : n(n_val), logn(logn_val), mod_value(mod_val), const_ratio(const_ratio_val), vec_acc(vec_buf) {}
-    
-    void operator()(sycl::handler& h) const {
-        // Get access to the buffer
-        auto data = vec_acc.get_access<sycl::access::mode::read_write>(h);
-        
-        // Capture necessary variables
-        size_t kernel_n = n;
-        size_t kernel_logn = logn;
-        uint32_t kernel_mod_val = mod_value;
-        const uint32_t* kernel_const_ratio = const_ratio;
-        
-        // Get the root directly within the kernel
-        uint32_t kernel_root = get_root();
-        
-        h.single_task([=]() [[intel::kernel_args_restrict]] {
-            size_t hsize = 1;
-            size_t tt = kernel_n / 2;
-            
-            // Loop over stages
-            for (size_t i = 0; i < kernel_logn; i++, hsize *= 2, tt /= 2) {
-                for (size_t j = 0, kstart = 0; j < hsize; j++, kstart += 2 * tt) {
-                    // Compute twiddle factor exponent
-                    uint32_t power = hsize + j;
-                    uint32_t s;
-                    
-                    if (power == 0) {
-                        s = 1;
-                    } else if (power == (1 << (kernel_logn - 1))) {
-                        s = kernel_root;
-                    } else {
-                        // Inline exponentiation: calculate s = root^power mod mod_val
-                        uint32_t current_power = kernel_root;
-                        uint32_t result = 1;
-                        size_t shift_count = kernel_logn - 1;
-                        
-                        while (true) {
-                            if (power & ((uint32_t)1 << shift_count)) {
-                                // Equivalent to mul_mod(current_power, result, mod)
-                                uint32_t product[2];
-                                
-                                // Equivalent to mul_uint_wide(current_power, result, product)
-                                uint64_t res_temp = (uint64_t)current_power * (uint64_t)result;
-                                product[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                                product[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                                
-                                // Equivalent to barrett_reduce_wide(product, mod)
-                                // Which calls barrett_reduce_64input_32modulus(product, mod)
-                                
-                                // Round 1
-                                uint32_t right_hw;
-                                {
-                                    uint32_t res[2];
-                                    uint64_t res_temp = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[0];
-                                    res[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                                    res[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                                    right_hw = res[1];
-                                }
-
-                                uint32_t middle_temp[2];
-                                {
-                                    uint64_t res_temp = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[1];
-                                    middle_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                                    middle_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                                }
-                                
-                                uint32_t middle_lw;
-                                uint32_t middle_lw_carry;
-                                {
-                                    middle_lw = right_hw + middle_temp[0];
-                                    middle_lw_carry = (uint8_t)(middle_lw < right_hw);
-                                }
-                                
-                                uint32_t middle_hw = middle_temp[1] + middle_lw_carry;
-
-                                // Round 2
-                                uint32_t middle2_temp[2];
-                                {
-                                    uint64_t res_temp = (uint64_t)product[1] * (uint64_t)kernel_const_ratio[0];
-                                    middle2_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                                    middle2_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                                }
-                                
-                                uint32_t middle2_lw;
-                                uint32_t middle2_lw_carry;
-                                {
-                                    middle2_lw = middle_lw + middle2_temp[0];
-                                    middle2_lw_carry = (uint8_t)(middle2_lw < middle_lw);
-                                }
-                                
-                                uint32_t middle2_hw = middle2_temp[1] + middle2_lw_carry;
-
-                                uint32_t tmp = product[1] * kernel_const_ratio[1] + middle_hw + middle2_hw;
-
-                                // Barrett subtraction
-                                tmp = product[0] - tmp * kernel_mod_val;
-                                
-                                // Equivalent to shift_result
-                                int32_t is_2q = (int32_t)(tmp >= kernel_mod_val);
-                                uint32_t mask = (uint32_t)(-is_2q);
-                                result = (uint32_t)(tmp) - (kernel_mod_val & mask);
-                            }
-                            
-                            power &= ~((uint32_t)1 << shift_count);
-                            if (power == 0) {
-                                s = result;
-                                break;
-                            }
-                            
-                            // Equivalent to mul_mod(current_power, current_power, mod)
-                            uint32_t product[2];
-                            
-                            // Equivalent to mul_uint_wide(current_power, current_power, product)
-                            uint64_t res_temp = (uint64_t)current_power * (uint64_t)current_power;
-                            product[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                            product[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                            
-                            // Equivalent to barrett_reduce_wide(product, mod)
-                            // Which calls barrett_reduce_64input_32modulus(product, mod)
-                            
-                            // Round 1
-                            uint32_t right_hw;
-                            {
-                                uint32_t res[2];
-                                uint64_t res_temp = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[0];
-                                res[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                                res[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                                right_hw = res[1];
-                            }
-
-                            uint32_t middle_temp[2];
-                            {
-                                uint64_t res_temp = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[1];
-                                middle_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                                middle_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                            }
-                            
-                            uint32_t middle_lw;
-                            uint32_t middle_lw_carry;
-                            {
-                                middle_lw = right_hw + middle_temp[0];
-                                middle_lw_carry = (uint8_t)(middle_lw < right_hw);
-                            }
-                            
-                            uint32_t middle_hw = middle_temp[1] + middle_lw_carry;
-
-                            // Round 2
-                            uint32_t middle2_temp[2];
-                            {
-                                uint64_t res_temp = (uint64_t)product[1] * (uint64_t)kernel_const_ratio[0];
-                                middle2_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                                middle2_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                            }
-                            
-                            uint32_t middle2_lw;
-                            uint32_t middle2_lw_carry;
-                            {
-                                middle2_lw = middle_lw + middle2_temp[0];
-                                middle2_lw_carry = (uint8_t)(middle2_lw < middle_lw);
-                            }
-                            
-                            uint32_t middle2_hw = middle2_temp[1] + middle2_lw_carry;
-
-                            uint32_t tmp = product[1] * kernel_const_ratio[1] + middle_hw + middle2_hw;
-
-                            // Barrett subtraction
-                            tmp = product[0] - tmp * kernel_mod_val;
-                            
-                            // Equivalent to shift_result
-                            int32_t is_2q = (int32_t)(tmp >= kernel_mod_val);
-                            uint32_t mask = (uint32_t)(-is_2q);
-                            current_power = (uint32_t)(tmp) - (kernel_mod_val & mask);
-                            
-                            shift_count--;
-                        }
-                    }
-                    
-                    // Process each pair in the current group
-                    for (size_t k = kstart; k < (kstart + tt); k++) {
-                        uint32_t u = data[k];
-                        
-                        // Equivalent to mul_mod(data[k + tt], s, mod)
-                        uint32_t v;
-                        {
-                            uint32_t product[2];
-                            
-                            // Equivalent to mul_uint_wide(data[k + tt], s, product)
-                            uint64_t res_temp = (uint64_t)data[k + tt] * (uint64_t)s;
-                            product[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                            product[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                            
-                            // Equivalent to barrett_reduce_wide(product, mod)
-                            // Which calls barrett_reduce_64input_32modulus(product, mod)
-                            
-                            // Round 1
-                            uint32_t right_hw;
-                            {
-                                uint32_t res[2];
-                                uint64_t res_temp = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[0];
-                                res[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                                res[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                                right_hw = res[1];
-                            }
-
-                            uint32_t middle_temp[2];
-                            {
-                                uint64_t res_temp = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[1];
-                                middle_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                                middle_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                            }
-                            
-                            uint32_t middle_lw;
-                            uint32_t middle_lw_carry;
-                            {
-                                middle_lw = right_hw + middle_temp[0];
-                                middle_lw_carry = (uint8_t)(middle_lw < right_hw);
-                            }
-                            
-                            uint32_t middle_hw = middle_temp[1] + middle_lw_carry;
-
-                            // Round 2
-                            uint32_t middle2_temp[2];
-                            {
-                                uint64_t res_temp = (uint64_t)product[1] * (uint64_t)kernel_const_ratio[0];
-                                middle2_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                                middle2_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                            }
-                            
-                            uint32_t middle2_lw;
-                            uint32_t middle2_lw_carry;
-                            {
-                                middle2_lw = middle_lw + middle2_temp[0];
-                                middle2_lw_carry = (uint8_t)(middle2_lw < middle_lw);
-                            }
-                            
-                            uint32_t middle2_hw = middle2_temp[1] + middle2_lw_carry;
-
-                            uint32_t tmp = product[1] * kernel_const_ratio[1] + middle_hw + middle2_hw;
-
-                            // Barrett subtraction
-                            tmp = product[0] - tmp * kernel_mod_val;
-                            
-                            // Equivalent to shift_result
-                            int32_t is_2q = (int32_t)(tmp >= kernel_mod_val);
-                            uint32_t mask = (uint32_t)(-is_2q);
-                            v = (uint32_t)(tmp) - (kernel_mod_val & mask);
-                        }
-                        
-                        // Equivalent to add_mod(u, v, mod)
-                        uint32_t result_add = u + v;
-                        if (result_add >= kernel_mod_val) result_add -= kernel_mod_val;
-                        data[k] = result_add;
-                        
-                        // Equivalent to sub_mod(u, v, mod)
-                        // First, equivalent to neg_mod(v, mod)
-                        uint32_t negated;
-                        {
-                            int32_t non_zero = (int32_t)(v != 0);
-                            uint32_t mask = (uint32_t)(-non_zero);
-                            negated = (kernel_mod_val - v) & mask;
-                        }
-                        
-                        // Then, equivalent to add_mod(u, negated, mod)
-                        uint32_t result_sub = u + negated;
-                        if (result_sub >= kernel_mod_val) result_sub -= kernel_mod_val;
-                        data[k + tt] = result_sub;
-                    }
-                }
-            }
-        });
-    }
-};
-
-// Implementation of ntt function
-void ntt(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec) {
-    // Optionally, add input validation assertions as needed
-
-    // Create a SYCL buffer for the vector
-    sycl::buffer<uint32_t, 1> vec_buf(vec, sycl::range<1>(n));
-
-    // Choose the device selector (using the FPGA emulator selector)
-    auto selector = sycl::ext::intel::fpga_emulator_selector_v;
-
-    try {
-        sycl::queue q{selector};
-        std::cout << "Running NTT on device: "
-                  << q.get_device().get_info<sycl::info::device::name>().c_str()
-                  << std::endl;
-
-        // Submit work using the updated NTTKernel that has integrated root calculation
-        q.submit([&](sycl::handler &h) {
-            // Note: No longer need to call get_ntt_root() externally
-            NTTKernel(n, logn, mod_value, const_ratio, vec_buf)(h);
-        }).wait();
-    } catch (sycl::exception const &e) {
-        std::cerr << "Caught a synchronous SYCL exception in ntt: "
-                  << e.what() << "\n";
-        std::exit(1);
-    }
-}
-
-class PolyMultNTTKernel {
-private:
-    size_t n;
-    uint32_t mod_value;
-    const uint32_t* const_ratio;
-    mutable sycl::buffer<uint32_t, 1> a_acc;
-    mutable sycl::buffer<uint32_t, 1> b_acc;
-
-public:
-    PolyMultNTTKernel(size_t n_val, uint32_t mod_val, const uint32_t* const_ratio_val,
-                        sycl::buffer<uint32_t, 1>& a_buf,
-                        sycl::buffer<uint32_t, 1>& b_buf)
-        : n(n_val), mod_value(mod_val), const_ratio(const_ratio_val), 
-            a_acc(a_buf), b_acc(b_buf) {}
-    
-    void operator()(sycl::handler& h) const {
-        // Get access to buffers
-        auto a = a_acc.get_access<sycl::access::mode::read_write>(h);
-        auto b = b_acc.get_access<sycl::access::mode::read>(h);
-        
-        // Capture necessary variables
-        size_t kernel_n = n;
-        uint32_t kernel_mod_val = mod_value;
-        const uint32_t* kernel_const_ratio = const_ratio;
-        
-        h.single_task([=]() [[intel::kernel_args_restrict]] {
-            // Component-wise multiplication
-            for (size_t i = 0; i < kernel_n; i++) {
-                // Get values
-                uint32_t a_val = a[i];
-                uint32_t b_val = b[i];
-                
-                // Multiply: a[i] = (a[i] * b[i]) mod q
-                
-                // 1. Multiply to get wide result
-                uint32_t product[2];
-                uint64_t res_temp = (uint64_t)a_val * (uint64_t)b_val;
-                product[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                product[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                
-                // 2. Barrett reduction starts here
-                
-                // Round 1
-                uint32_t right_hw;
-                {
-                    uint32_t res[2];
-                    uint64_t res_temp = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[0];
-                    res[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                    res[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                    right_hw = res[1];
-                }
-
-                uint32_t middle_temp[2];
-                {
-                    uint64_t res_temp = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[1];
-                    middle_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                    middle_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                }
-                
-                uint32_t middle_lw;
-                uint32_t middle_lw_carry;
-                {
-                    middle_lw = right_hw + middle_temp[0];
-                    middle_lw_carry = (uint8_t)(middle_lw < right_hw);
-                }
-                
-                uint32_t middle_hw = middle_temp[1] + middle_lw_carry;
-
-                // Round 2
-                uint32_t middle2_temp[2];
-                {
-                    uint64_t res_temp = (uint64_t)product[1] * (uint64_t)kernel_const_ratio[0];
-                    middle2_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                    middle2_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                }
-                
-                uint32_t middle2_lw;
-                uint32_t middle2_lw_carry;
-                {
-                    middle2_lw = middle_lw + middle2_temp[0];
-                    middle2_lw_carry = (uint8_t)(middle2_lw < middle_lw);
-                }
-                
-                uint32_t middle2_hw = middle2_temp[1] + middle2_lw_carry;
-
-                uint32_t tmp = product[1] * kernel_const_ratio[1] + middle_hw + middle2_hw;
-
-                // Barrett subtraction
-                tmp = product[0] - tmp * kernel_mod_val;
-                
-                // Final reduction if needed
-                int32_t is_2q = (int32_t)(tmp >= kernel_mod_val);
-                uint32_t mask = (uint32_t)(-is_2q);
-                a[i] = (uint32_t)(tmp) - (kernel_mod_val & mask);
-            }
-        });
-    }
-};
-
-// Public function to perform polynomial multiplication in NTT form
-void ntt_form_poly_mod_mult(uint32_t *a, const uint32_t *b, size_t n, uint32_t mod_value, const uint32_t* const_ratio) {
-    // Create SYCL buffers
-    sycl::buffer<uint32_t, 1> a_buf(a, sycl::range<1>(n));
-    sycl::buffer<uint32_t, 1> b_buf(const_cast<uint32_t*>(b), sycl::range<1>(n));
-    
-    // Create SYCL queue
-    auto selector = sycl::ext::intel::fpga_emulator_selector_v;
-    
-    try {
-        sycl::queue q{selector};
-        
-        // Print device info
-        std::cout << "Running NTT Polynomial Multiplication on device: "
-                  << q.get_device().get_info<sycl::info::device::name>().c_str()
-                  << std::endl;
-        
-        // Submit and execute the kernel
-        q.submit(PolyMultNTTKernel(n, mod_value, const_ratio, a_buf, b_buf)).wait();
-        
-    } catch (sycl::exception const &e) {
-        std::cerr << "Caught a synchronous SYCL exception in poly_mult_mod_ntt_form_inpl: "
-                  << e.what() << "\n";
-        std::exit(1);
-    }
-}
-
-class PolyNegModKernel {
-private:
-    size_t n;
-    uint32_t mod_value;
-    mutable sycl::buffer<uint32_t, 1> p_acc;
-
-public:
-    PolyNegModKernel(size_t n_val, uint32_t mod_val, sycl::buffer<uint32_t, 1>& p_buf)
-        : n(n_val), mod_value(mod_val), p_acc(p_buf) {}
-    
-    void operator()(sycl::handler& h) const {
-        // Get access to buffer
-        auto p = p_acc.get_access<sycl::access::mode::read_write>(h);
-        
-        // Capture necessary variables
-        size_t kernel_n = n;
-        uint32_t kernel_mod_val = mod_value;
-        
-        h.single_task([=]() [[intel::kernel_args_restrict]] {
-            // Apply negation to each coefficient
-            for (size_t i = 0; i < kernel_n; i++) {
-                // Get the coefficient
-                uint32_t coeff = p[i];
-                
-                // Compute if coefficient is non-zero
-                int32_t non_zero = (int32_t)(coeff != 0);
-                uint32_t mask = (uint32_t)(-non_zero);
-                
-                // Compute negation: if coeff == 0, result = 0; else result = q - coeff
-                uint32_t result = (kernel_mod_val - coeff) & mask;
-                
-                // Store the result
-                p[i] = result;
-            }
-        });
-    }
-};
-
-// Public function to negate polynomial coefficients modulo q
-void poly_negate_mod(uint32_t *p, size_t n, uint32_t mod_value) {
-    // Create SYCL buffer for the polynomial
-    sycl::buffer<uint32_t, 1> p_buf(p, sycl::range<1>(n));
-    
-    // Create SYCL queue
-    auto selector = sycl::ext::intel::fpga_emulator_selector_v;
-    
-    try {
-        sycl::queue q{selector};
-        
-        // Print device info
-        std::cout << "Running Polynomial Negation on device: "
-                  << q.get_device().get_info<sycl::info::device::name>().c_str()
-                  << std::endl;
-        
-        // Submit and execute the kernel
-        q.submit(PolyNegModKernel(n, mod_value, p_buf)).wait();
-        
-    } catch (sycl::exception const &e) {
-        std::cerr << "Caught a synchronous SYCL exception in poly_neg_mod: "
-                  << e.what() << "\n";
-        std::exit(1);
-    }
-}
-
-// Kernel for reducing int64_t values to their representation in ring Z_q
-class ReduceSetPTEKernel {
-private:
-    size_t n;
-    uint32_t mod_value;
-    const uint32_t* const_ratio;
-    mutable sycl::buffer<int64_t, 1> conj_vals_int_acc;
-    mutable sycl::buffer<uint32_t, 1> out_acc;
-
-public:
-    ReduceSetPTEKernel(size_t n_val, uint32_t mod_val, const uint32_t* const_ratio_val,
-                        sycl::buffer<int64_t, 1>& conj_vals_int_buf,
-                        sycl::buffer<uint32_t, 1>& out_buf)
-        : n(n_val), mod_value(mod_val), const_ratio(const_ratio_val), 
-            conj_vals_int_acc(conj_vals_int_buf), out_acc(out_buf) {}
-    
-    void operator()(sycl::handler& h) const {
-        // Get access to buffers
-        auto conj_vals_int = conj_vals_int_acc.get_access<sycl::access::mode::read>(h);
-        auto out = out_acc.get_access<sycl::access::mode::write>(h);
-        
-        // Capture necessary variables
-        size_t kernel_n = n;
-        uint32_t kernel_mod_val = mod_value;
-        const uint32_t* kernel_const_ratio = const_ratio;
-        
-        h.single_task([=]() [[intel::kernel_args_restrict]] {
-            // Process each coefficient
-            for (size_t i = 0; i < kernel_n; i++) {
-                // Get the input value
-                int64_t val = conj_vals_int[i];
-                
-                // Compute absolute value
-                uint64_t coeff_abs = (val < 0) ? static_cast<uint64_t>(-val) : static_cast<uint64_t>(val);
-                
-                // Create mask based on sign (1 if negative, 0 if positive)
-                uint32_t mask = static_cast<uint32_t>(val < 0);
-                
-                // Split 64-bit value into two 32-bit parts for Barrett reduction
-                uint32_t coeff_abs_vec[2];
-                coeff_abs_vec[0] = static_cast<uint32_t>(coeff_abs & 0xFFFFFFFF);
-                coeff_abs_vec[1] = static_cast<uint32_t>((coeff_abs >> 32) & 0xFFFFFFFF);
-                
-                // Inline Barrett reduction
-                // -- Round 1
-                uint32_t right_hw;
-                {
-                    uint64_t res_temp = (uint64_t)coeff_abs_vec[0] * (uint64_t)kernel_const_ratio[0];
-                    right_hw = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                }
-                
-                uint32_t middle_temp[2];
-                {
-                    uint64_t res_temp = (uint64_t)coeff_abs_vec[0] * (uint64_t)kernel_const_ratio[1];
-                    middle_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                    middle_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                }
-                
-                uint32_t middle_lw;
-                uint32_t middle_lw_carry;
-                {
-                    middle_lw = right_hw + middle_temp[0];
-                    middle_lw_carry = (uint8_t)(middle_lw < right_hw);
-                }
-                
-                uint32_t middle_hw = middle_temp[1] + middle_lw_carry;
-                
-                // -- Round 2
-                uint32_t middle2_temp[2];
-                {
-                    uint64_t res_temp = (uint64_t)coeff_abs_vec[1] * (uint64_t)kernel_const_ratio[0];
-                    middle2_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                    middle2_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                }
-                
-                uint32_t middle2_lw;
-                uint32_t middle2_lw_carry;
-                {
-                    middle2_lw = middle_lw + middle2_temp[0];
-                    middle2_lw_carry = (uint8_t)(middle2_lw < middle_lw);
-                }
-                
-                uint32_t middle2_hw = middle2_temp[1] + middle2_lw_carry;
-                
-                uint32_t tmp = coeff_abs_vec[1] * kernel_const_ratio[1] + middle_hw + middle2_hw;
-                
-                // -- Barrett subtraction
-                tmp = coeff_abs_vec[0] - tmp * kernel_mod_val;
-                
-                // -- Final reduction if needed
-                uint32_t coeff_crt;
-                {
-                    int32_t is_2q = (int32_t)(tmp >= kernel_mod_val);
-                    uint32_t tmp_mask = (uint32_t)(-is_2q);
-                    coeff_crt = (uint32_t)(tmp) - (kernel_mod_val & tmp_mask);
-                }
-                
-                // Compute final result based on sign
-                // If negative: mod_val - coeff_crt, otherwise: coeff_crt
-                // Using constant-time operations to avoid timing attacks
-                uint32_t result = ((kernel_mod_val - coeff_crt) & (-mask)) + (coeff_crt & (mask - 1));
-                
-                // Store the result
-                out[i] = result;
-            }
-        });
-    }
-};
-    
-// Public function to perform modular reduction of int64_t values
-void reduce_pte(const int64_t *conj_vals_int, size_t n, uint32_t mod_value, 
-                const uint32_t* const_ratio, uint32_t *out) {
-    // Create SYCL buffers
-    sycl::buffer<int64_t, 1> conj_vals_int_buf(const_cast<int64_t*>(conj_vals_int), sycl::range<1>(n));
-    sycl::buffer<uint32_t, 1> out_buf(out, sycl::range<1>(n));
-    
-    // Create SYCL queue
-    auto selector = sycl::ext::intel::fpga_emulator_selector_v;
-    
-    try {
-        sycl::queue q{selector};
-        
-        // Print device info
-        std::cout << "Running Modular Reduction on device: "
-                    << q.get_device().get_info<sycl::info::device::name>().c_str()
-                    << std::endl;
-        
-        // Submit and execute the kernel
-        q.submit(ReduceSetPTEKernel(n, mod_value, const_ratio, conj_vals_int_buf, out_buf)).wait();
-        
-    } catch (sycl::exception const &e) {
-        std::cerr << "Caught a synchronous SYCL exception in reduce_set_pte: "
-                    << e.what() << "\n";
-        std::exit(1);
-    }
-}
-
-// Kernel for modular addition of two polynomials
-class PolyAddModKernel {
-private:
-    size_t n;
-    uint32_t mod_value;
-    mutable sycl::buffer<uint32_t, 1> p1_acc;
-    mutable sycl::buffer<uint32_t, 1> p2_acc;
-
-public:
-    PolyAddModKernel(size_t n_val, uint32_t mod_val,
-                        sycl::buffer<uint32_t, 1>& p1_buf,
-                        sycl::buffer<uint32_t, 1>& p2_buf)
-        : n(n_val), mod_value(mod_val), p1_acc(p1_buf), p2_acc(p2_buf) {}
-    
-    void operator()(sycl::handler& h) const {
-        // Get access to buffers
-        auto p1 = p1_acc.get_access<sycl::access::mode::read_write>(h);
-        auto p2 = p2_acc.get_access<sycl::access::mode::read>(h);
-        
-        // Capture necessary variables
-        size_t kernel_n = n;
-        uint32_t kernel_mod_val = mod_value;
-        
-        h.single_task([=]() [[intel::kernel_args_restrict]] {
-            // Process each coefficient
-            for (size_t i = 0; i < kernel_n; i++) {
-                // Get coefficients
-                uint32_t coeff1 = p1[i];
-                uint32_t coeff2 = p2[i];
-                
-                // Add coefficients
-                uint32_t sum = coeff1 + coeff2;
-                
-                // Reduce modulo q: 
-                // If sum >= q, subtract q
-                int32_t is_ge_q = (int32_t)(sum >= kernel_mod_val);
-                uint32_t mask = (uint32_t)(-is_ge_q);
-                uint32_t result = sum - (kernel_mod_val & mask);
-                
-                // Store the result
-                p1[i] = result;
-            }
-        });
-    }
-};
-    
-// Public function to add two polynomials modulo q
-void poly_add_mod(uint32_t *p1, const uint32_t *p2, size_t n, uint32_t mod_value) {
-    // Create SYCL buffers
-    sycl::buffer<uint32_t, 1> p1_buf(p1, sycl::range<1>(n));
-    sycl::buffer<uint32_t, 1> p2_buf(const_cast<uint32_t*>(p2), sycl::range<1>(n));
-    
-    // Create SYCL queue
-    auto selector = sycl::ext::intel::fpga_emulator_selector_v;
-    
-    try {
-        sycl::queue q{selector};
-        
-        // Print device info
-        std::cout << "Running Polynomial Addition on device: "
-                    << q.get_device().get_info<sycl::info::device::name>().c_str()
-                    << std::endl;
-        
-        // Submit and execute the kernel
-        q.submit(PolyAddModKernel(n, mod_value, p1_buf, p2_buf)).wait();
-        
-    } catch (sycl::exception const &e) {
-        std::cerr << "Caught a synchronous SYCL exception in poly_add_mod_inpl: "
-                    << e.what() << "\n";
-        std::exit(1);
-    }
-}
+// Include the SYCL kernel headers
+#include "SYCL_ifft.h"
+#include "SYCL_scale_and_convert.h"
+#include "SYCL_ntt.h"
+#include "SYCL_poly_mult.h"
+#include "SYCL_poly_add.h"
+#include "SYCL_poly_neg.h"
+#include "SYCL_reduce_pte.h"
 
 // Implementation of the C-compatible function from SYCL_ckks_sym.h
 extern "C" void SYCL_combined_encrypt(
@@ -981,4 +107,140 @@ extern "C" void SYCL_combined_encrypt(
     
     // 10. Add to ciphertext.
     poly_add_mod(c0_s, ntt_pte, n, mod_value);
+}
+
+// Implementation of ntt function
+void ntt(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec) {
+    // Optionally, add input validation assertions as needed
+
+    // Create a SYCL buffer for the vector
+    sycl::buffer<uint32_t, 1> vec_buf(vec, sycl::range<1>(n));
+
+    // Choose the device selector (using the FPGA emulator selector)
+    auto selector = sycl::ext::intel::fpga_emulator_selector_v;
+
+    try {
+        sycl::queue q{selector};
+        std::cout << "Running NTT on device: "
+                  << q.get_device().get_info<sycl::info::device::name>().c_str()
+                  << std::endl;
+
+        // Submit work using the updated NTTKernel that has integrated root calculation
+        q.submit([&](sycl::handler &h) {
+            // Note: No longer need to call get_ntt_root() externally
+            NTTKernel(n, logn, mod_value, const_ratio, vec_buf)(h);
+        }).wait();
+    } catch (sycl::exception const &e) {
+        std::cerr << "Caught a synchronous SYCL exception in ntt: "
+                  << e.what() << "\n";
+        std::exit(1);
+    }
+}
+
+// Public function to perform polynomial multiplication in NTT form
+void ntt_form_poly_mod_mult(uint32_t *a, const uint32_t *b, size_t n, uint32_t mod_value, const uint32_t* const_ratio) {
+    // Create SYCL buffers
+    sycl::buffer<uint32_t, 1> a_buf(a, sycl::range<1>(n));
+    sycl::buffer<uint32_t, 1> b_buf(const_cast<uint32_t*>(b), sycl::range<1>(n));
+    
+    // Create SYCL queue
+    auto selector = sycl::ext::intel::fpga_emulator_selector_v;
+    
+    try {
+        sycl::queue q{selector};
+        
+        // Print device info
+        std::cout << "Running NTT Polynomial Multiplication on device: "
+                  << q.get_device().get_info<sycl::info::device::name>().c_str()
+                  << std::endl;
+        
+        // Submit and execute the kernel
+        q.submit(PolyMultNTTKernel(n, mod_value, const_ratio, a_buf, b_buf)).wait();
+        
+    } catch (sycl::exception const &e) {
+        std::cerr << "Caught a synchronous SYCL exception in poly_mult_mod_ntt_form_inpl: "
+                  << e.what() << "\n";
+        std::exit(1);
+    }
+}
+
+// Public function to negate polynomial coefficients modulo q
+void poly_negate_mod(uint32_t *p, size_t n, uint32_t mod_value) {
+    // Create SYCL buffer for the polynomial
+    sycl::buffer<uint32_t, 1> p_buf(p, sycl::range<1>(n));
+    
+    // Create SYCL queue
+    auto selector = sycl::ext::intel::fpga_emulator_selector_v;
+    
+    try {
+        sycl::queue q{selector};
+        
+        // Print device info
+        std::cout << "Running Polynomial Negation on device: "
+                  << q.get_device().get_info<sycl::info::device::name>().c_str()
+                  << std::endl;
+        
+        // Submit and execute the kernel
+        q.submit(PolyNegModKernel(n, mod_value, p_buf)).wait();
+        
+    } catch (sycl::exception const &e) {
+        std::cerr << "Caught a synchronous SYCL exception in poly_neg_mod: "
+                  << e.what() << "\n";
+        std::exit(1);
+    }
+}
+    
+// Public function to perform modular reduction of int64_t values
+void reduce_pte(const int64_t *conj_vals_int, size_t n, uint32_t mod_value, 
+                const uint32_t* const_ratio, uint32_t *out) {
+    // Create SYCL buffers
+    sycl::buffer<int64_t, 1> conj_vals_int_buf(const_cast<int64_t*>(conj_vals_int), sycl::range<1>(n));
+    sycl::buffer<uint32_t, 1> out_buf(out, sycl::range<1>(n));
+    
+    // Create SYCL queue
+    auto selector = sycl::ext::intel::fpga_emulator_selector_v;
+    
+    try {
+        sycl::queue q{selector};
+        
+        // Print device info
+        std::cout << "Running Modular Reduction on device: "
+                    << q.get_device().get_info<sycl::info::device::name>().c_str()
+                    << std::endl;
+        
+        // Submit and execute the kernel
+        q.submit(ReduceSetPTEKernel(n, mod_value, const_ratio, conj_vals_int_buf, out_buf)).wait();
+        
+    } catch (sycl::exception const &e) {
+        std::cerr << "Caught a synchronous SYCL exception in reduce_set_pte: "
+                    << e.what() << "\n";
+        std::exit(1);
+    }
+}
+    
+// Public function to add two polynomials modulo q
+void poly_add_mod(uint32_t *p1, const uint32_t *p2, size_t n, uint32_t mod_value) {
+    // Create SYCL buffers
+    sycl::buffer<uint32_t, 1> p1_buf(p1, sycl::range<1>(n));
+    sycl::buffer<uint32_t, 1> p2_buf(const_cast<uint32_t*>(p2), sycl::range<1>(n));
+    
+    // Create SYCL queue
+    auto selector = sycl::ext::intel::fpga_emulator_selector_v;
+    
+    try {
+        sycl::queue q{selector};
+        
+        // Print device info
+        std::cout << "Running Polynomial Addition on device: "
+                    << q.get_device().get_info<sycl::info::device::name>().c_str()
+                    << std::endl;
+        
+        // Submit and execute the kernel
+        q.submit(PolyAddModKernel(n, mod_value, p1_buf, p2_buf)).wait();
+        
+    } catch (sycl::exception const &e) {
+        std::cerr << "Caught a synchronous SYCL exception in poly_add_mod_inpl: "
+                    << e.what() << "\n";
+        std::exit(1);
+    }
 }
