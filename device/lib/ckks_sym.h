@@ -9,6 +9,7 @@ Symmetric CKKS encryption.
 
 #pragma once
 
+#include <complex.h>
 #include <stdbool.h>
 
 #include "ckks_common.h"
@@ -16,14 +17,17 @@ Symmetric CKKS encryption.
 #include "parameters.h"
 #include "rng.h"
 
+typedef double complex complex_double;
+
 #ifdef SE_USE_MALLOC
 /**
 Returns the required size of the memory pool in units of sizeof(ZZ).
 
 @param[in] degree  Desired polynomial ring degree
-@returns           Required size of the memory pool units of sizeof(ZZ)
+@returns           Required size of the memory pool in units of sizeof(ZZ)
 */
 size_t ckks_get_mempool_size_sym(size_t degree);
+
 
 /**
 Sets up the memory pool for CKKS symmetric encryption.
@@ -34,6 +38,7 @@ Note: This function calls calloc.
 @returns           A handle to the memory pool
 */
 ZZ *ckks_mempool_setup_sym(size_t degree);
+
 #endif
 
 /**
@@ -45,6 +50,8 @@ Should only need to be called once during initial memory allocation.
 @param[out] se_ptrs  Pointers object. Pointers will be updated to mempool locations.
 */
 void ckks_set_ptrs_sym(size_t degree, ZZ *mempool, SE_PTRS *se_ptrs);
+
+void ckks_combined_set_ptrs_sym(size_t degree, ZZ* mempool, SE_PTRS* se_ptrs);
 
 /**
 Sets up a CKKS secret key. For symmetric encryption, this should either be called once at the start
@@ -60,10 +67,10 @@ Size req: If seed is !NULL, seed must be SE_PRNG_SEED_BYTE_COUNT long.
 @param[in]     parms  Parameters set by ckks_setup
 @param[in]     seed   [Optional]. Seed to seed 'prng' with, if prng is used.
 @param[in,out] prng   [Optional]. PRNG instance needed to generate randomness for secret key
-                      polynomial. Should not be shared.
+                     polynomial. Should not be shared.
 @param[out]    s      Secret key polynomial. Must have space for n coefficients. If 'small' s is
-                      used, this must be 2 bits per coefficient. Otherwise, this must be sizeof(ZZ)
-                      per coefficient.
+                     used, this must be 2 bits per coefficient. Otherwise, this must be sizeof(ZZ)
+                     per coefficient.
 */
 void ckks_setup_s(const Parms *parms, uint8_t *seed, SE_PRNG *prng, ZZ *s);
 
@@ -79,14 +86,14 @@ Size req: If seeds are !NULL, seeds must be SE_PRNG_SEED_BYTE_COUNT long.
 @param[in]     share_seed_in   [Optional]. Seed to seed 'shareable_prng' with.
 @param[in]     seed_in         [Optional]. Seed to seed 'prng' with.
 @param[in,out] shareable_prng  PRNG instance needed to generate first component of ciphertexts. Is
-                               safe to share.
+                              safe to share.
 @param[in,out] prng            PRNG instance needed to generate error polynomial. Should not be
-                               shared.
+                              shared.
 @param[in,out] conj_vals_int   As pointed to by conj_vals_int_ptr (n int64 values).
-                               In: ckks pt; Out: pt + error (non-reduced)
+                              In: ckks pt; Out: pt + error (non-reduced)
 */
 void ckks_sym_init(const Parms *parms, uint8_t *share_seed_in, uint8_t *seed_in,
-                   SE_PRNG *shareable_prng, SE_PRNG *prng, int64_t *conj_vals_int);
+                  SE_PRNG *shareable_prng, SE_PRNG *prng, int64_t *conj_vals_int);
 
 /**
 Encodes and symmetrically encrypts a vector of values using CKKS for the current modulus prime.
@@ -99,7 +106,8 @@ ep_small to the compessed form of the error.
 @param[in]     conj_vals_int   [Optional]. See description.
 @param[in]     ep_small        [Optional]. See description. For debugging only.
 @param[in,out] shareable_prng  PRNG instance needed to generate first component of ciphertexts. Is
-                               safe to share.
+                              safe to share.
+@param         s_small         Secret key in small form
 @param         ntt_pte         Scratch space. Will be used to store pt + e (in NTT form)
 @param         ntt_roots       Scratch space. May be used to load NTT roots.
 @param[out]    c0_s            1st component of the ciphertext. Stores n coeffs of size ZZ.
@@ -108,8 +116,8 @@ ep_small to the compessed form of the error.
 @param[out]    c1_save         [Optional]. Useful for testing.
 */
 void ckks_encode_encrypt_sym(const Parms *parms, const int64_t *conj_vals_int,
-                             const int8_t *ep_small, SE_PRNG *shareable_prng, ZZ *s_small,
-                             ZZ *ntt_pte, ZZ *ntt_roots, ZZ *c0_s, ZZ *c1, ZZ *s_save, ZZ *c1_save);
+                            const int8_t *ep_small, SE_PRNG *shareable_prng, ZZ *s_small,
+                            ZZ *ntt_pte, ZZ *ntt_roots, ZZ *c0_s, ZZ *c1, ZZ *s_save, ZZ *c1_save);
 
 /**
 Updates parameters to next prime in modulus switching chain for symmetric CKKS encryption. Also
@@ -121,3 +129,38 @@ will be reduced later).
 @returns              1 on success, 0 on failure (reached end of modulus chain)
 */
 bool ckks_next_prime_sym(Parms *parms, ZZ *s);
+
+/**
+ * Encodes and symmetrically encrypts a vector of values using CKKS for the current modulus prime.
+ *
+ * @param[in]     parms            Parameters set by ckks_setup
+ * @param[in]     values           Raw floating-point values to encode and encrypt
+ * @param[in]     values_len       Number of values to encode
+ * @param[in,out] shareable_prng   PRNG for generating uniform polynomials (can be shared)
+ * @param[in,out] error_prng       PRNG for generating error (should not be shared)
+ * @param[in]     s_small          Secret key in small form
+ * @param[out]    ntt_pte          Scratch space for NTT transforms
+ * @param[in,out] ntt_roots        Scratch space for NTT roots
+ * @param[out]    c0_s             First component of the ciphertext
+ * @param[out]    c1               Second component of the ciphertext
+ * @param[out]    s_save           [Optional] Secret key for testing (can be NULL)
+ * @param[out]    c1_save          [Optional] Copy of c1 for testing (can be NULL)
+ * @param[in]     encoding_buffer  [Optional] Buffer for encoding (can be NULL)
+ * @param[in]     index_map        [Optional] Index map for encoding (can be NULL depending on config)
+ */
+void ckks_combined_encode_encrypt_sym(
+    const Parms *parms,
+    const flpt *values,
+    size_t values_len,
+    SE_PRNG *shareable_prng,
+    SE_PRNG *error_prng,
+    ZZ *s_small,
+    ZZ *ntt_pte,
+    ZZ *ntt_roots,
+    ZZ *c0_s,
+    ZZ *c1,
+    ZZ *s_save,
+    ZZ *c1_save,
+    complex_double *encoding_buffer,
+    uint16_t *index_map
+);
