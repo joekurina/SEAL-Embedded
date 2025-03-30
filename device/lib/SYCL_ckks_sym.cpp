@@ -6,9 +6,6 @@
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
-// Forward declaration of get_ntt_root function
-static uint32_t get_ntt_root(size_t n, uint32_t q);
-
 // IFFT Kernel functor class
 class IFFTKernel {
 private:
@@ -120,15 +117,78 @@ private:
     size_t n;
     size_t logn;
     uint32_t mod_value;
-    uint32_t root;
     const uint32_t* const_ratio;
     mutable sycl::buffer<uint32_t, 1> vec_acc;
 
+    // Internal function to get the NTT root
+    uint32_t get_root() const {
+        uint32_t root;
+        switch (n) {
+            case 4096:
+                switch (mod_value) {
+                    case 134012929: root = 7470; break;
+                    case 134111233: root = 3856; break;
+                    case 134176769: root = 24149; break;
+                    case 1053818881: root = 503422; break;
+                    case 1054015489: root = 16768; break;
+                    case 1054212097: root = 7305; break;
+                    default: {
+                        printf("Error! Need first power of root for ntt, n = 4K\n");
+                        printf("Modulus value = %d", mod_value);
+                        exit(1);
+                    }
+                }
+                break;
+            case 8192:
+                switch (mod_value) {
+                    case 1053818881: root = 374229; break;
+                    case 1054015489: root = 123363; break;
+                    case 1054212097: root = 79941; break;
+                    case 1055260673: root = 38869; break;
+                    case 1056178177: root = 162146; break;
+                    case 1056440321: root = 81884; break;
+                    default: {
+                        printf("Error! Need first power of root for ntt, n = 8K\n");
+                        printf("Modulus value = %d", mod_value);
+                        exit(1);
+                    }
+                }
+                break;
+            case 16384:
+                switch (mod_value) {
+                    case 1053818881: root = 13040; break;
+                    case 1054015489: root = 507; break;
+                    case 1054212097: root = 1595; break;
+                    case 1055260673: root = 68507; break;
+                    case 1056178177: root = 3073; break;
+                    case 1056440321: root = 6854; break;
+                    case 1058209793: root = 44467; break;
+                    case 1060175873: root = 16117; break;
+                    case 1060700161: root = 27607; break;
+                    case 1060765697: root = 222391; break;
+                    case 1061093377: root = 105471; break;
+                    case 1062469633: root = 310222; break;
+                    case 1062535169: root = 2005; break;
+                    default: {
+                        printf("Error! Need first power of root for ntt, n = 16K\n");
+                        printf("Modulus value = %d", mod_value);
+                        exit(1);
+                    }
+                }
+                break;
+            default: {
+                printf("Error! Need first power of root for ntt\n");
+                printf("Modulus value = %d", mod_value);
+                exit(1);
+            }
+        }
+        return root;
+    }
+
 public:
-    NTTKernel(size_t n_val, size_t logn_val, uint32_t mod_val, uint32_t root_val, 
+    NTTKernel(size_t n_val, size_t logn_val, uint32_t mod_val, 
                 const uint32_t* const_ratio_val, sycl::buffer<uint32_t, 1>& vec_buf)
-        : n(n_val), logn(logn_val), mod_value(mod_val), root(root_val), 
-            const_ratio(const_ratio_val), vec_acc(vec_buf) {}
+        : n(n_val), logn(logn_val), mod_value(mod_val), const_ratio(const_ratio_val), vec_acc(vec_buf) {}
     
     void operator()(sycl::handler& h) const {
         // Get access to the buffer
@@ -138,8 +198,10 @@ public:
         size_t kernel_n = n;
         size_t kernel_logn = logn;
         uint32_t kernel_mod_val = mod_value;
-        uint32_t kernel_root = root;
         const uint32_t* kernel_const_ratio = const_ratio;
+        
+        // Get the root directly within the kernel
+        uint32_t kernel_root = get_root();
         
         h.single_task([=]() [[intel::kernel_args_restrict]] {
             size_t hsize = 1;
@@ -403,9 +465,6 @@ public:
 void ntt(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec) {
     // Optionally, add input validation assertions as needed
 
-    // Compute the primitive root for the NTT
-    const uint32_t root = get_ntt_root(n, mod_value);
-
     // Create a SYCL buffer for the vector
     sycl::buffer<uint32_t, 1> vec_buf(vec, sycl::range<1>(n));
 
@@ -418,9 +477,10 @@ void ntt(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio,
                   << q.get_device().get_info<sycl::info::device::name>().c_str()
                   << std::endl;
 
-        // Submit work using a lambda that calls the NTTKernel functor
+        // Submit work using the updated NTTKernel that has integrated root calculation
         q.submit([&](sycl::handler &h) {
-            NTTKernel(n, logn, mod_value, root, const_ratio, vec_buf)(h);
+            // Note: No longer need to call get_ntt_root() externally
+            NTTKernel(n, logn, mod_value, const_ratio, vec_buf)(h);
         }).wait();
     } catch (sycl::exception const &e) {
         std::cerr << "Caught a synchronous SYCL exception in ntt: "
@@ -921,73 +981,4 @@ extern "C" void SYCL_combined_encrypt(
     
     // 10. Add to ciphertext.
     poly_add_mod(c0_s, ntt_pte, n, mod_value);
-}
-
-static uint32_t get_ntt_root(size_t n, uint32_t q)
-{
-    uint32_t root;
-    switch (n)
-    {
-        case 4096:
-            switch (q)
-            {
-                case 134012929: root = 7470; break;
-                case 134111233: root = 3856; break;
-                case 134176769: root = 24149; break;
-                case 1053818881: root = 503422; break;
-                case 1054015489: root = 16768; break;
-                case 1054212097: root = 7305; break;
-                default: {
-                    printf("Error! Need first power of root for ntt, n = 4K\n");
-                    printf("Modulus value = %d", q);
-                    exit(1);
-                }
-            }
-            break;
-        case 8192:
-            switch (q)
-            {
-                case 1053818881: root = 374229; break;
-                case 1054015489: root = 123363; break;
-                case 1054212097: root = 79941; break;
-                case 1055260673: root = 38869; break;
-                case 1056178177: root = 162146; break;
-                case 1056440321: root = 81884; break;
-                default: {
-                    printf("Error! Need first power of root for ntt, n = 8K\n");
-                    printf("Modulus value = %d", q);
-                    exit(1);
-                }
-            }
-            break;
-        case 16384:
-            switch (q)
-            {
-                case 1053818881: root = 13040; break;
-                case 1054015489: root = 507; break;
-                case 1054212097: root = 1595; break;
-                case 1055260673: root = 68507; break;
-                case 1056178177: root = 3073; break;
-                case 1056440321: root = 6854; break;
-                case 1058209793: root = 44467; break;
-                case 1060175873: root = 16117; break;
-                case 1060700161: root = 27607; break;
-                case 1060765697: root = 222391; break;
-                case 1061093377: root = 105471; break;
-                case 1062469633: root = 310222; break;
-                case 1062535169: root = 2005; break;
-                default: {
-                    printf("Error! Need first power of root for ntt, n = 16K\n");
-                    printf("Modulus value = %d", q);
-                    exit(1);
-                }
-            }
-            break;
-        default: {
-            printf("Error! Need first power of root for ntt\n");
-            printf("Modulus value = %d", q);
-            exit(1);
-        }
-    }
-    return root;
 }
