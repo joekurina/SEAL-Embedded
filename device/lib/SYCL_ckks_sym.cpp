@@ -45,17 +45,14 @@ public:
             };
             
             // IFFT implementation
-            [[intel::fpga_register]] size_t tt = 1, h = kernel_n / 2;
+            size_t tt = 1, h = kernel_n / 2;
             
-            #pragma unroll
             for (size_t round = 0; round < kernel_logn; round++, tt *= 2, h /= 2) {
-                #pragma unroll 4
                 for (size_t j = 0, kstart = 0; j < h; j++, kstart += 2 * tt) {
-                    [[intel::fpga_register]] complex_double s;
+                    complex_double s;
                     size_t br = bitrev(h + j, kernel_logn);
                     s = std::conj(calc_root_otf(br, kernel_n << 1));
                     
-                    #pragma unroll 4 
                     for (size_t k = kstart; k < kstart + tt; k++) {
                         complex_double u = encoding[k];
                         complex_double v = encoding[k + tt];
@@ -100,7 +97,6 @@ public:
             double n_inv = kernel_scale / static_cast<double>(kernel_n);
             
             // Scale, convert to integers, and add error in one pass
-            #pragma unroll 4
             for (size_t i = 0; i < kernel_n; i++) {
                 // Get real part of complex value
                 double real_val = encoding[i].real();
@@ -460,7 +456,6 @@ public:
         
         h.single_task([=]() [[intel::kernel_args_restrict]] {
             // Component-wise multiplication
-            #pragma unroll 4
             for (size_t i = 0; i < kernel_n; i++) {
                 // Get values
                 uint32_t a_val = a[i];
@@ -580,7 +575,6 @@ public:
         
         h.single_task([=]() [[intel::kernel_args_restrict]] {
             // Apply negation to each coefficient
-            #pragma unroll 8 
             for (size_t i = 0; i < kernel_n; i++) {
                 // Get the coefficient
                 uint32_t coeff = p[i];
@@ -653,7 +647,6 @@ public:
         
         h.single_task([=]() [[intel::kernel_args_restrict]] {
             // Process each coefficient
-            #pragma unroll 4
             for (size_t i = 0; i < kernel_n; i++) {
                 // Get the input value
                 int64_t val = conj_vals_int[i];
@@ -788,7 +781,6 @@ public:
         
         h.single_task([=]() [[intel::kernel_args_restrict]] {
             // Process each coefficient
-            #pragma unroll 8
             for (size_t i = 0; i < kernel_n; i++) {
                 // Get coefficients
                 uint32_t coeff1 = p1[i];
