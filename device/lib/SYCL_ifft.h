@@ -5,7 +5,7 @@
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
-// IFFT Kernel functor class that reads and writes to pipes
+// IFFT Kernel functor class that reads from and writes to pipes
 class IFFTKernel {
 private:
     size_t n;
@@ -22,7 +22,7 @@ public:
         
         h.single_task([=]() [[intel::kernel_args_restrict]] {
             // Local array to store input data
-            complex_double encoding[16384]; // Use max size that could be needed
+            complex_double encoding[4096]; // 16384 max size that could be needed
             
             // Read data from input pipe
             for (size_t i = 0; i < kernel_n; i++) {
