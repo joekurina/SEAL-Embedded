@@ -30,12 +30,12 @@ void pipeline(
                 sycl::buffer<complex_double, 1>& encoding_buf, 
                 sycl::buffer<int8_t, 1>& error_samples_buf,
                 sycl::buffer<int64_t, 1>& pt_with_error_buf );
-void ntt_1(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec);
-void ntt_2(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec);
-void ntt_form_poly_mod_mult(uint32_t *a, const uint32_t *b, size_t n, uint32_t mod_value, const uint32_t* const_ratio);
-void poly_negate_mod(uint32_t *p, size_t n, uint32_t mod_value);
-void reduce_pte(const int64_t *conj_vals_int, size_t n, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *out);
-void poly_add_mod(uint32_t *p1, const uint32_t *p2, size_t n, uint32_t mod_value);
+void ntt_1(sycl::queue q, size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec);
+void ntt_2(sycl::queue q, size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec);
+void ntt_form_poly_mod_mult(sycl::queue q, uint32_t *a, const uint32_t *b, size_t n, uint32_t mod_value, const uint32_t* const_ratio);
+void poly_negate_mod(sycl::queue q, uint32_t *p, size_t n, uint32_t mod_value);
+void reduce_pte(sycl::queue q, const int64_t *conj_vals_int, size_t n, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *out);
+void poly_add_mod(sycl::queue q, uint32_t *p1, const uint32_t *p2, size_t n, uint32_t mod_value);
 
 // Implementation of the C-compatible function from SYCL_ckks_sym.h
 extern "C" void SYCL_combined_encrypt(
@@ -91,7 +91,7 @@ extern "C" void SYCL_combined_encrypt(
     
     // 4. Apply NTT to the secret key.
     // Updated call passing explicit parameters.
-    ntt_1(n, logn, mod_value, const_ratio, c0_s);
+    ntt_1(q, n, logn, mod_value, const_ratio, c0_s);
     
     // 5. Save NTT(s) for later decryption if requested.
     if (s_save != nullptr) {
@@ -99,19 +99,19 @@ extern "C" void SYCL_combined_encrypt(
     }
     
     // 6. Calculate [a*s]_Rq using polynomial multiplication in NTT form.
-    ntt_form_poly_mod_mult(c0_s, c1, n, mod_value, const_ratio);
+    ntt_form_poly_mod_mult(q, c0_s, c1, n, mod_value, const_ratio);
     
     // 7. Negate [a*s]_Rq to get [-a*s]_Rq.
-    poly_negate_mod(c0_s, n, mod_value);
+    poly_negate_mod(q, c0_s, n, mod_value);
     
     // 8. Process plaintext + error into ntt_pte.
-    reduce_pte(pt_with_error, n, mod_value, const_ratio, ntt_pte);
+    reduce_pte(q, pt_with_error, n, mod_value, const_ratio, ntt_pte);
 
     // 9. Apply NTT to plaintext + error.
-    ntt_2(n, logn, mod_value, const_ratio, ntt_pte);
+    ntt_2(q, n, logn, mod_value, const_ratio, ntt_pte);
     
     // 10. Add to ciphertext.
-    poly_add_mod(c0_s, ntt_pte, n, mod_value);
+    poly_add_mod(q, c0_s, ntt_pte, n, mod_value);
 }
 
 // Function to perform the pipeline of kernels
@@ -166,24 +166,17 @@ void pipeline(
 }
 
 // Function to perofrm the first NTT
-void ntt_1(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec) {
-    // Optionally, add input validation assertions as needed
-
+void ntt_1(sycl::queue q, size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec) {
     // Create a SYCL buffer for the vector
     sycl::buffer<uint32_t, 1> vec_buf(vec, sycl::range<1>(n));
 
-    // Choose the device selector (using the FPGA emulator selector)
-    auto selector = sycl::ext::intel::fpga_emulator_selector_v;
-
     try {
-        sycl::queue q{selector};
         std::cout << "Running First NTT on device: "
                   << q.get_device().get_info<sycl::info::device::name>().c_str()
                   << std::endl;
 
-        // Submit work using the updated NTTKernel that has integrated root calculation
+        // Submit work using the NTTKernel_1
         q.submit([&](sycl::handler &h) {
-            // Note: No longer need to call get_ntt_root() externally
             NTTKernel_1(n, logn, mod_value, const_ratio, vec_buf)(h);
         }).wait();
     } catch (sycl::exception const &e) {
@@ -194,24 +187,17 @@ void ntt_1(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_rati
 }
 
 // Function to perofrm the second NTT
-void ntt_2(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec) {
-    // Optionally, add input validation assertions as needed
-
+void ntt_2(sycl::queue q, size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec) {
     // Create a SYCL buffer for the vector
     sycl::buffer<uint32_t, 1> vec_buf(vec, sycl::range<1>(n));
 
-    // Choose the device selector (using the FPGA emulator selector)
-    auto selector = sycl::ext::intel::fpga_emulator_selector_v;
-
     try {
-        sycl::queue q{selector};
         std::cout << "Running Second NTT on device: "
                   << q.get_device().get_info<sycl::info::device::name>().c_str()
                   << std::endl;
 
-        // Submit work using the updated NTTKernel that has integrated root calculation
+        // Submit work using the NTTKernel_2
         q.submit([&](sycl::handler &h) {
-            // Note: No longer need to call get_ntt_root() externally
             NTTKernel_2(n, logn, mod_value, const_ratio, vec_buf)(h);
         }).wait();
     } catch (sycl::exception const &e) {
@@ -222,17 +208,12 @@ void ntt_2(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_rati
 }
 
 // Function to perform polynomial multiplication in NTT form
-void ntt_form_poly_mod_mult(uint32_t *a, const uint32_t *b, size_t n, uint32_t mod_value, const uint32_t* const_ratio) {
+void ntt_form_poly_mod_mult(sycl::queue q, uint32_t *a, const uint32_t *b, size_t n, uint32_t mod_value, const uint32_t* const_ratio) {
     // Create SYCL buffers
     sycl::buffer<uint32_t, 1> a_buf(a, sycl::range<1>(n));
     sycl::buffer<uint32_t, 1> b_buf(const_cast<uint32_t*>(b), sycl::range<1>(n));
     
-    // Create SYCL queue
-    auto selector = sycl::ext::intel::fpga_emulator_selector_v;
-    
     try {
-        sycl::queue q{selector};
-        
         // Print device info
         std::cout << "Running NTT Polynomial Multiplication on device: "
                   << q.get_device().get_info<sycl::info::device::name>().c_str()
@@ -249,16 +230,11 @@ void ntt_form_poly_mod_mult(uint32_t *a, const uint32_t *b, size_t n, uint32_t m
 }
 
 // Function to negate polynomial coefficients modulo q
-void poly_negate_mod(uint32_t *p, size_t n, uint32_t mod_value) {
+void poly_negate_mod(sycl::queue q, uint32_t *p, size_t n, uint32_t mod_value) {
     // Create SYCL buffer for the polynomial
     sycl::buffer<uint32_t, 1> p_buf(p, sycl::range<1>(n));
-    
-    // Create SYCL queue
-    auto selector = sycl::ext::intel::fpga_emulator_selector_v;
-    
+
     try {
-        sycl::queue q{selector};
-        
         // Print device info
         std::cout << "Running Polynomial Negation on device: "
                   << q.get_device().get_info<sycl::info::device::name>().c_str()
@@ -275,18 +251,13 @@ void poly_negate_mod(uint32_t *p, size_t n, uint32_t mod_value) {
 }
     
 // Function to perform modular reduction of int64_t values
-void reduce_pte(const int64_t *conj_vals_int, size_t n, uint32_t mod_value, 
+void reduce_pte(sycl::queue q, const int64_t *conj_vals_int, size_t n, uint32_t mod_value, 
                 const uint32_t* const_ratio, uint32_t *out) {
     // Create SYCL buffers
     sycl::buffer<int64_t, 1> conj_vals_int_buf(const_cast<int64_t*>(conj_vals_int), sycl::range<1>(n));
     sycl::buffer<uint32_t, 1> out_buf(out, sycl::range<1>(n));
-    
-    // Create SYCL queue
-    auto selector = sycl::ext::intel::fpga_emulator_selector_v;
-    
+
     try {
-        sycl::queue q{selector};
-        
         // Print device info
         std::cout << "Running Modular Reduction on device: "
                     << q.get_device().get_info<sycl::info::device::name>().c_str()
@@ -303,17 +274,12 @@ void reduce_pte(const int64_t *conj_vals_int, size_t n, uint32_t mod_value,
 }
     
 // Function to add two polynomials modulo q
-void poly_add_mod(uint32_t *p1, const uint32_t *p2, size_t n, uint32_t mod_value) {
+void poly_add_mod(sycl::queue q, uint32_t *p1, const uint32_t *p2, size_t n, uint32_t mod_value) {
     // Create SYCL buffers
     sycl::buffer<uint32_t, 1> p1_buf(p1, sycl::range<1>(n));
     sycl::buffer<uint32_t, 1> p2_buf(const_cast<uint32_t*>(p2), sycl::range<1>(n));
-    
-    // Create SYCL queue
-    auto selector = sycl::ext::intel::fpga_emulator_selector_v;
-    
-    try {
-        sycl::queue q{selector};
-        
+
+    try {      
         // Print device info
         std::cout << "Running Polynomial Addition on device: "
                     << q.get_device().get_info<sycl::info::device::name>().c_str()
