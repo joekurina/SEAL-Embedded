@@ -16,7 +16,8 @@
 #include "SYCL_reduce_pte.h"
 
 // Function prototypes for internal functions used in SYCL_combined_encrypt
-void ntt(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec);
+void ntt_1(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec);
+void ntt_2(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec);
 void ntt_form_poly_mod_mult(uint32_t *a, const uint32_t *b, size_t n, uint32_t mod_value, const uint32_t* const_ratio);
 void poly_negate_mod(uint32_t *p, size_t n, uint32_t mod_value);
 void reduce_pte(const int64_t *conj_vals_int, size_t n, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *out);
@@ -25,25 +26,21 @@ void poly_add_mod(uint32_t *p1, const uint32_t *p2, size_t n, uint32_t mod_value
 // Implementation of the C-compatible function from SYCL_ckks_sym.h
 extern "C" void SYCL_combined_encrypt(
     /* parms related values */
-    size_t n,                       // Polynomial degree
-    size_t logn,                    // Log of polynomial degree
-    double scale,                   // Scale value
-    
-    /* modulus related values */
-    uint32_t mod_value,             // Modulus value (q)
-    const uint32_t* const_ratio,    // Const ratio for Barrett reduction
-    
-    /* data buffers */
-    complex_double* encoding_buffer, // Buffer for encoding
-    uint32_t* expanded_s,           // Expanded secret key
-    uint32_t* uniform_poly,         // Uniform polynomial (c1)
-    int8_t* error_samples,          // Error samples
-    int64_t* pt_with_error,         // Plaintext + error
-    uint32_t* ntt_pte,              // Scratch space for NTT
-    uint32_t* c0_s,                 // Output: 1st ciphertext component
-    uint32_t* c1,                   // Output: 2nd ciphertext component
-    uint32_t* s_save,               // Optional: Save expanded s (for testing)
-    uint32_t* c1_save               // Optional: Save c1 (for testing)
+    size_t n,                           // Polynomial degree
+    size_t logn,                        // Log of polynomial degree
+    double scale,                       // Scale value
+    uint32_t mod_value,                 // Modulus value (q)
+    const uint32_t* const_ratio,        // Const ratio for Barrett reduction
+    complex_double* encoding_buffer,    // Buffer for encoding
+    uint32_t* expanded_s,               // Expanded secret key
+    uint32_t* uniform_poly,             // Uniform polynomial (c1)
+    int8_t* error_samples,              // Error samples
+    int64_t* pt_with_error,             // Plaintext + error
+    uint32_t* ntt_pte,                  // Scratch space for NTT
+    uint32_t* c0_s,                     // Output: 1st ciphertext component
+    uint32_t* c1,                       // Output: 2nd ciphertext component
+    uint32_t* s_save,                   // Optional: Save expanded s (for testing)
+    uint32_t* c1_save                   // Optional: Save c1 (for testing)
 ) {
     // Create SYCL buffers from the input pointers.
     sycl::buffer<complex_double, 1> encoding_buf(encoding_buffer, sycl::range<1>(n));
@@ -52,6 +49,14 @@ extern "C" void SYCL_combined_encrypt(
     sycl::buffer<uint32_t, 1> expanded_s_buf(expanded_s, sycl::range<1>(n));
     sycl::buffer<uint32_t, 1> uniform_poly_buf(uniform_poly, sycl::range<1>(n));
 
+    // Get host-access pointers for the expanded secret key and uniform poly.
+    auto expanded_s_ptr = expanded_s_buf.get_host_access().get_pointer();
+    auto uniform_poly_ptr = uniform_poly_buf.get_host_access().get_pointer();
+    
+    // ==============================================================
+    //   Generate ciphertext components
+    // ==============================================================
+    
     // Create a SYCL queue using the FPGA emulator selector.
     sycl::queue q{sycl::ext::intel::fpga_emulator_selector_v};
     auto device = q.get_device();
@@ -71,15 +76,7 @@ extern "C" void SYCL_combined_encrypt(
     q.submit([&](sycl::handler &h) {
         ScaleAndConvertKernel(n, scale, encoding_buf, pt_with_error_buf, error_samples_buf)(h);
     }).wait();
-    
-    // Get host-access pointers for the expanded secret key and uniform poly.
-    auto expanded_s_ptr = expanded_s_buf.get_host_access().get_pointer();
-    auto uniform_poly_ptr = uniform_poly_buf.get_host_access().get_pointer();
-    
-    // ==============================================================
-    //   Generate ciphertext components
-    // ==============================================================
-    
+
     // 1. Copy uniform polynomial to c1 output.
     std::memcpy(c1, uniform_poly_ptr, n * sizeof(uint32_t));
     
@@ -93,7 +90,7 @@ extern "C" void SYCL_combined_encrypt(
     
     // 4. Apply NTT to the secret key.
     // Updated call passing explicit parameters.
-    ntt(n, logn, mod_value, const_ratio, c0_s);
+    ntt_1(n, logn, mod_value, const_ratio, c0_s);
     
     // 5. Save NTT(s) for later decryption if requested.
     if (s_save != nullptr) {
@@ -108,16 +105,16 @@ extern "C" void SYCL_combined_encrypt(
     
     // 8. Process plaintext + error into ntt_pte.
     reduce_pte(pt_with_error, n, mod_value, const_ratio, ntt_pte);
-    
+
     // 9. Apply NTT to plaintext + error.
-    ntt(n, logn, mod_value, const_ratio, ntt_pte);
+    ntt_2(n, logn, mod_value, const_ratio, ntt_pte);
     
     // 10. Add to ciphertext.
     poly_add_mod(c0_s, ntt_pte, n, mod_value);
 }
 
-// Implementation of ntt function
-void ntt(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec) {
+// Implementation of the first ntt function
+void ntt_1(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec) {
     // Optionally, add input validation assertions as needed
 
     // Create a SYCL buffer for the vector
@@ -128,14 +125,42 @@ void ntt(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio,
 
     try {
         sycl::queue q{selector};
-        std::cout << "Running NTT on device: "
+        std::cout << "Running First NTT on device: "
                   << q.get_device().get_info<sycl::info::device::name>().c_str()
                   << std::endl;
 
         // Submit work using the updated NTTKernel that has integrated root calculation
         q.submit([&](sycl::handler &h) {
             // Note: No longer need to call get_ntt_root() externally
-            NTTKernel(n, logn, mod_value, const_ratio, vec_buf)(h);
+            NTTKernel_1(n, logn, mod_value, const_ratio, vec_buf)(h);
+        }).wait();
+    } catch (sycl::exception const &e) {
+        std::cerr << "Caught a synchronous SYCL exception in ntt: "
+                  << e.what() << "\n";
+        std::exit(1);
+    }
+}
+
+// Implementation of the first ntt function
+void ntt_2(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec) {
+    // Optionally, add input validation assertions as needed
+
+    // Create a SYCL buffer for the vector
+    sycl::buffer<uint32_t, 1> vec_buf(vec, sycl::range<1>(n));
+
+    // Choose the device selector (using the FPGA emulator selector)
+    auto selector = sycl::ext::intel::fpga_emulator_selector_v;
+
+    try {
+        sycl::queue q{selector};
+        std::cout << "Running Second NTT on device: "
+                  << q.get_device().get_info<sycl::info::device::name>().c_str()
+                  << std::endl;
+
+        // Submit work using the updated NTTKernel that has integrated root calculation
+        q.submit([&](sycl::handler &h) {
+            // Note: No longer need to call get_ntt_root() externally
+            NTTKernel_2(n, logn, mod_value, const_ratio, vec_buf)(h);
         }).wait();
     } catch (sycl::exception const &e) {
         std::cerr << "Caught a synchronous SYCL exception in ntt: "
