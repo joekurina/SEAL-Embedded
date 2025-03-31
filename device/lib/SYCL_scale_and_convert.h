@@ -9,13 +9,13 @@ class ScaleAndConvertKernel {
 private:
     size_t n;
     double scale;
-    mutable sycl::buffer<complex_double, 1> encoding_acc;
+    mutable sycl::buffer<std::complex<double>, 1> encoding_acc;
     mutable sycl::buffer<int64_t, 1> pt_with_error_acc;
     mutable sycl::buffer<int8_t, 1> error_samples_acc;
 
 public:
     ScaleAndConvertKernel(size_t n_val, double scale_val,
-                          sycl::buffer<complex_double, 1>& encoding_buf,
+                          sycl::buffer<std::complex<double>, 1>& encoding_buf,
                           sycl::buffer<int64_t, 1>& pt_with_error_buf,
                           sycl::buffer<int8_t, 1>& error_samples_buf)
         : n(n_val), scale(scale_val), encoding_acc(encoding_buf),
