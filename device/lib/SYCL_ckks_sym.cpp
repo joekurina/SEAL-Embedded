@@ -20,7 +20,7 @@
 #include "SYCL_poly_neg.h"
 #include "SYCL_reduce_pte.h"
 
-// Function prototypes for internal functions used in SYCL_combined_encrypt
+// Function prototypes
 void pipeline(
                 sycl::queue q, 
                 sycl::device device, 
@@ -114,6 +114,7 @@ extern "C" void SYCL_combined_encrypt(
     poly_add_mod(c0_s, ntt_pte, n, mod_value);
 }
 
+// Function to perform the pipeline of kernels
 void pipeline(
     sycl::queue q,
     sycl::device device,
@@ -124,16 +125,47 @@ void pipeline(
     sycl::buffer<int8_t, 1>& error_samples_buf,
     sycl::buffer<int64_t, 1>& pt_with_error_buf
 ) {
-    // Implement the pipeline function here
-    // 1. Submit the EntranceKernel to read from buffers and write to pipes
-    // 2. Submit the IFFTKernel to read from pipes and write to pipes
-    // 3. Submit the ScaleAndConvertKernel to read from pipes and write to the exit pipe
-    // 4. Submit the ExitKernel to read from pipes and write to the output buffer
-    // Note: Ensure that the kernels are executed in the correct order
-    // and that the data dependencies are respected.
+
+    try {
+        // 1. Submit the EntranceKernel to read from buffers and write to pipes
+        auto entrance_event = q.submit([&](sycl::handler &h) {
+            EntranceKernel(n, encoding_buf, error_samples_buf)(h);
+        });
+
+        // 2. Submit the IFFTKernel to process data from pipes and write to pipes
+        auto ifft_event = q.submit([&](sycl::handler &h) {
+            // Make the IFFT kernel depend on the entrance kernel
+            h.depends_on(entrance_event);
+            IFFTKernel(n, logn)(h);
+        });
+
+        // 3. Submit the ScaleAndConvertKernel to process data from pipes
+        auto scale_event = q.submit([&](sycl::handler &h) {
+            // Make the scale kernel depend on the IFFT kernel
+            h.depends_on(ifft_event);
+            ScaleAndConvertKernel(n, scale)(h);
+        });
+
+        // 4. Submit the ExitKernel to read from pipes and write to the output buffer
+        auto exit_event = q.submit([&](sycl::handler &h) {
+            // Make the exit kernel depend on the scale kernel
+            h.depends_on(scale_event);
+            ExitKernel(n, pt_with_error_buf)(h);
+        });
+
+        // Wait for all kernels to complete
+        exit_event.wait();
+
+        std::cout << "Pipeline execution completed successfully." << std::endl;
+
+    } catch (sycl::exception const &e) {
+        std::cerr << "Caught a synchronous SYCL exception in pipeline: "
+                  << e.what() << std::endl;
+        std::exit(1);
+    }
 }
 
-// Implementation of the first ntt function
+// Function to perofrm the first NTT
 void ntt_1(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec) {
     // Optionally, add input validation assertions as needed
 
@@ -161,7 +193,7 @@ void ntt_1(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_rati
     }
 }
 
-// Implementation of the second ntt function
+// Function to perofrm the second NTT
 void ntt_2(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec) {
     // Optionally, add input validation assertions as needed
 
@@ -189,7 +221,7 @@ void ntt_2(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_rati
     }
 }
 
-// Public function to perform polynomial multiplication in NTT form
+// Function to perform polynomial multiplication in NTT form
 void ntt_form_poly_mod_mult(uint32_t *a, const uint32_t *b, size_t n, uint32_t mod_value, const uint32_t* const_ratio) {
     // Create SYCL buffers
     sycl::buffer<uint32_t, 1> a_buf(a, sycl::range<1>(n));
@@ -216,7 +248,7 @@ void ntt_form_poly_mod_mult(uint32_t *a, const uint32_t *b, size_t n, uint32_t m
     }
 }
 
-// Public function to negate polynomial coefficients modulo q
+// Function to negate polynomial coefficients modulo q
 void poly_negate_mod(uint32_t *p, size_t n, uint32_t mod_value) {
     // Create SYCL buffer for the polynomial
     sycl::buffer<uint32_t, 1> p_buf(p, sycl::range<1>(n));
@@ -242,7 +274,7 @@ void poly_negate_mod(uint32_t *p, size_t n, uint32_t mod_value) {
     }
 }
     
-// Public function to perform modular reduction of int64_t values
+// Function to perform modular reduction of int64_t values
 void reduce_pte(const int64_t *conj_vals_int, size_t n, uint32_t mod_value, 
                 const uint32_t* const_ratio, uint32_t *out) {
     // Create SYCL buffers
@@ -270,7 +302,7 @@ void reduce_pte(const int64_t *conj_vals_int, size_t n, uint32_t mod_value,
     }
 }
     
-// Public function to add two polynomials modulo q
+// Function to add two polynomials modulo q
 void poly_add_mod(uint32_t *p1, const uint32_t *p2, size_t n, uint32_t mod_value) {
     // Create SYCL buffers
     sycl::buffer<uint32_t, 1> p1_buf(p1, sycl::range<1>(n));
