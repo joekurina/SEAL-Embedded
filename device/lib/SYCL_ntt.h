@@ -45,6 +45,7 @@ public:
                 else if (kernel_mod_val == 1054212097) kernel_root = 7305;
                 else kernel_root = 1; // Default fallback, invalid but prevents crashing
             }
+            /*
             // Case for n = 8192
             else if (kernel_n == 8192) {
                 if (kernel_mod_val == 1053818881) kernel_root = 374229;
@@ -75,7 +76,7 @@ public:
             else {
                 kernel_root = 1; // Default fallback
             }
-            
+            */
             size_t hsize = 1;
             size_t tt = kernel_n / 2;
             
@@ -372,6 +373,7 @@ class NTTKernel_2 {
                     else if (kernel_mod_val == 1054212097) kernel_root = 7305;
                     else kernel_root = 1; // Default fallback, invalid but prevents crashing
                 }
+                /*
                 // Case for n = 8192
                 else if (kernel_n == 8192) {
                     if (kernel_mod_val == 1053818881) kernel_root = 374229;
@@ -402,7 +404,7 @@ class NTTKernel_2 {
                 else {
                     kernel_root = 1; // Default fallback
                 }
-                
+                */
                 size_t hsize = 1;
                 size_t tt = kernel_n / 2;
                 
