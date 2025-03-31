@@ -29,13 +29,9 @@ public:
         size_t kernel_n = n;
         
         h.single_task([=]() [[intel::kernel_args_restrict]] {
-            // Write encoding data to IFFT pipe
+            // Interleave writing to both pipes
             for (size_t i = 0; i < kernel_n; i++) {
                 EntranceToIFFTPipe::write(encoding[i]);
-            }
-            
-            // Write error samples to ScaleAndConvert pipe
-            for (size_t i = 0; i < kernel_n; i++) {
                 EntranceToScaleErrorPipe::write(error_samples[i]);
             }
         });
