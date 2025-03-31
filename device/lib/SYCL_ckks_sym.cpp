@@ -124,51 +124,13 @@ void pipeline(
     sycl::buffer<int8_t, 1>& error_samples_buf,
     sycl::buffer<int64_t, 1>& pt_with_error_buf
 ) {
-    try {
-        std::cout << "Running pipelined kernels on device: "
-                  << device.get_info<sycl::info::device::name>().c_str()
-                  << std::endl;
-        
-        // Set pipe capacities smaller to avoid potential memory issues
-        std::cout << "NOTE: Using reduced pipe capacity to avoid memory issues" << std::endl;
-        
-        // First submit just the entrance kernel
-        std::cout << "Submitting entrance kernel alone..." << std::endl;
-        q.submit([&](sycl::handler &h) {
-            EntranceKernel(n, encoding_buf, error_samples_buf)(h);
-        }).wait();
-        std::cout << "Entrance kernel completed successfully" << std::endl;
-        
-        // Then submit just the IFFT kernel
-        std::cout << "Submitting IFFT kernel alone..." << std::endl;
-        q.submit([&](sycl::handler &h) {
-            IFFTKernel(n, logn)(h);
-        }).wait();
-        std::cout << "IFFT kernel completed successfully" << std::endl;
-        
-        // If we got here, continue with the rest
-        std::cout << "Submitting Scale and Convert kernel alone..." << std::endl;
-        auto scale_event = q.submit([&](sycl::handler &h) {
-            ScaleAndConvertKernel(n, scale)(h);
-        });
-        
-        auto exit_event = q.submit([&](sycl::handler &h) {
-            ExitKernel(n, pt_with_error_buf)(h);
-        });
-        
-        // Wait for all operations to complete
-        std::cout << "Waiting for scale and exit kernels to complete..." << std::endl;
-        scale_event.wait();
-        std::cout << "Scale kernel completed successfully" << std::endl;
-        exit_event.wait();
-        std::cout << "Exit kernel completed successfully" << std::endl;
-        
-        std::cout << "Pipelined operations completed successfully" << std::endl;
-    } catch (sycl::exception const &e) {
-        std::cerr << "Caught a synchronous SYCL exception in pipeline: "
-                  << e.what() << "\n";
-        std::exit(1);
-    }
+    // Implement the pipeline function here
+    // 1. Submit the EntranceKernel to read from buffers and write to pipes
+    // 2. Submit the IFFTKernel to read from pipes and write to pipes
+    // 3. Submit the ScaleAndConvertKernel to read from pipes and write to the exit pipe
+    // 4. Submit the ExitKernel to read from pipes and write to the output buffer
+    // Note: Ensure that the kernels are executed in the correct order
+    // and that the data dependencies are respected.
 }
 
 // Implementation of the first ntt function
