@@ -27,7 +27,7 @@ public:
             // Process each element
             for (size_t i = 0; i < kernel_n; i++) {
                 // Read from pipes
-                complex_double encoded_value = IFFTToScaleAndConvertPipe::read();
+                std::complex<double> encoded_value = IFFTToScaleAndConvertPipe::read();
                 int8_t error_value = EntranceToScaleErrorPipe::read();
                 
                 // Get real part of complex value

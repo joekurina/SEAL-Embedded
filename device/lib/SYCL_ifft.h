@@ -22,7 +22,7 @@ public:
         
         h.single_task([=]() [[intel::kernel_args_restrict]] {
             // Local array to store input data
-            complex_double encoding[4096]; // 16384 max size that could be needed
+            std::complex<double> encoding[4096]; // 16384 max size that could be needed
             
             // Read data from input pipe
             for (size_t i = 0; i < kernel_n; i++) {
@@ -39,9 +39,9 @@ public:
             };
             
             // Root calculation function
-            auto calc_root_otf = [](size_t k, size_t m) -> complex_double {
+            auto calc_root_otf = [](size_t k, size_t m) -> std::complex<double> {
                 double angle = 2.0 * M_PI * static_cast<double>(k) / static_cast<double>(m);
-                return complex_double(sycl::cos(angle), sycl::sin(angle));
+                return std::complex<double>(sycl::cos(angle), sycl::sin(angle));
             };
             
             // IFFT implementation
@@ -49,13 +49,13 @@ public:
             
             for (size_t round = 0; round < kernel_logn; round++, tt *= 2, h /= 2) {
                 for (size_t j = 0, kstart = 0; j < h; j++, kstart += 2 * tt) {
-                    complex_double s;
+                    std::complex<double> s;
                     size_t br = bitrev(h + j, kernel_logn);
                     s = std::conj(calc_root_otf(br, kernel_n << 1));
                     
                     for (size_t k = kstart; k < kstart + tt; k++) {
-                        complex_double u = encoding[k];
-                        complex_double v = encoding[k + tt];
+                        std::complex<double> u = encoding[k];
+                        std::complex<double> v = encoding[k + tt];
                         encoding[k]      = u + v;
                         encoding[k + tt] = (u - v) * s;
                     }

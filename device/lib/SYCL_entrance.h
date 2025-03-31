@@ -9,12 +9,12 @@
 class EntranceKernel {
 private:
     size_t n;
-    mutable sycl::buffer<complex_double, 1> encoding_acc;
+    mutable sycl::buffer<std::complex<double>, 1> encoding_acc;
     mutable sycl::buffer<int8_t, 1> error_samples_acc;
 
 public:
     EntranceKernel(size_t n_val,
-                   sycl::buffer<complex_double, 1>& encoding_buf,
+                   sycl::buffer<std::complex<double>, 1>& encoding_buf,
                    sycl::buffer<int8_t, 1>& error_samples_buf)
         : n(n_val), 
           encoding_acc(encoding_buf),

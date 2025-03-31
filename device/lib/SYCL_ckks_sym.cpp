@@ -1,8 +1,4 @@
 #include "SYCL_ckks_sym.h"
-#include <cstdio>
-#include <cstring>
-#include <algorithm>
-#include <memory>
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
@@ -27,7 +23,7 @@ void pipeline(
                 size_t n, 
                 size_t logn, 
                 double scale, 
-                sycl::buffer<complex_double, 1>& encoding_buf, 
+                sycl::buffer<std::complex<double>, 1>& encoding_buf, 
                 sycl::buffer<int8_t, 1>& error_samples_buf,
                 sycl::buffer<int64_t, 1>& pt_with_error_buf );
 void ntt_1(sycl::queue q, size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec);
@@ -57,7 +53,7 @@ extern "C" void SYCL_combined_encrypt(
     uint32_t* c1_save                   // Optional: Save c1 (for testing)
 ) {
     // Create SYCL buffers from the input pointers.
-    sycl::buffer<complex_double, 1> encoding_buf(encoding_buffer, sycl::range<1>(n));
+    sycl::buffer<std::complex<double>, 1> encoding_buf(encoding_buffer, sycl::range<1>(n));
     sycl::buffer<int64_t, 1> pt_with_error_buf(pt_with_error, sycl::range<1>(n));
     sycl::buffer<int8_t, 1> error_samples_buf(error_samples, sycl::range<1>(n));
     sycl::buffer<uint32_t, 1> expanded_s_buf(expanded_s, sycl::range<1>(n));
@@ -121,7 +117,7 @@ void pipeline(
     size_t n,                           
     size_t logn,                        
     double scale,                       
-    sycl::buffer<complex_double, 1>& encoding_buf,
+    sycl::buffer<std::complex<double>, 1>& encoding_buf,
     sycl::buffer<int8_t, 1>& error_samples_buf,
     sycl::buffer<int64_t, 1>& pt_with_error_buf
 ) {

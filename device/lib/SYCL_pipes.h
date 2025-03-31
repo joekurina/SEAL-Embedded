@@ -9,7 +9,7 @@ constexpr size_t PIPE_CAPACITY = 4096; // Reduced from 4096 for testing
 
 // Pipes for the Entrance to IFFT kernel
 using EntranceToIFFTPipe = 
-    sycl::ext::intel::pipe<class EntranceToIFFTPipeID, complex_double, PIPE_CAPACITY>;
+    sycl::ext::intel::pipe<class EntranceToIFFTPipeID, std::complex<double>, PIPE_CAPACITY>;
 
 // Pipe from Entrance to ScaleAndConvert for error samples
 using EntranceToScaleErrorPipe =
@@ -17,7 +17,7 @@ using EntranceToScaleErrorPipe =
 
 // Pipe from IFFT to ScaleAndConvert kernel
 using IFFTToScaleAndConvertPipe = 
-    sycl::ext::intel::pipe<class IFFTToScaleAndConvertPipeID, complex_double, PIPE_CAPACITY>;
+    sycl::ext::intel::pipe<class IFFTToScaleAndConvertPipeID, std::complex<double>, PIPE_CAPACITY>;
 
 // Pipe from ScaleAndConvert to Exit kernel
 using ScaleAndConvertToExitPipe =
