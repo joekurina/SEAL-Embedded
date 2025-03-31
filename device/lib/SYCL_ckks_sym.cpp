@@ -25,7 +25,6 @@ void poly_add_mod(sycl::queue q, uint32_t *p1, const uint32_t *p2, size_t n, uin
 
 // Implementation of the C-compatible function from SYCL_ckks_sym.h
 extern "C" void SYCL_combined_encrypt(
-    /* parms related values */
     size_t n,                           // Polynomial degree
     size_t logn,                        // Log of polynomial degree
     double scale,                       // Scale value
