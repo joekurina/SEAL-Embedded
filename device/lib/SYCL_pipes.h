@@ -5,10 +5,9 @@
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
 // Define pipe capacity - adjust based on N
-constexpr size_t PIPE_CAPACITY = 4096;
+constexpr size_t PIPE_CAPACITY = 1024; // Reduced from 4096 for testing
 
-// Pipes for the Entrance Kernel
-// Pipe from Entrance to IFFT kernel
+// Pipes for the Entrance to IFFT kernel
 using EntranceToIFFTPipe = 
     sycl::ext::intel::pipe<class EntranceToIFFTPipeID, complex_double, PIPE_CAPACITY>;
 

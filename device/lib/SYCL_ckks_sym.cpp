@@ -114,13 +114,12 @@ extern "C" void SYCL_combined_encrypt(
     poly_add_mod(c0_s, ntt_pte, n, mod_value);
 }
 
-// Implementation of the SYCL pipeline function
 void pipeline(
     sycl::queue q,
     sycl::device device,
-    size_t n,                           // Polynomial degree
-    size_t logn,                        // Log of polynomial degree
-    double scale,                       // Scale value
+    size_t n,                           
+    size_t logn,                        
+    double scale,                       
     sycl::buffer<complex_double, 1>& encoding_buf,
     sycl::buffer<int8_t, 1>& error_samples_buf,
     sycl::buffer<int64_t, 1>& pt_with_error_buf
@@ -129,32 +128,40 @@ void pipeline(
         std::cout << "Running pipelined kernels on device: "
                   << device.get_info<sycl::info::device::name>().c_str()
                   << std::endl;
-                  
-        // Submit the entrance kernel to read from buffers and write to pipes
-        auto entrance_event = q.submit([&](sycl::handler &h) {
+        
+        // Set pipe capacities smaller to avoid potential memory issues
+        std::cout << "NOTE: Using reduced pipe capacity to avoid memory issues" << std::endl;
+        
+        // First submit just the entrance kernel
+        std::cout << "Submitting entrance kernel alone..." << std::endl;
+        q.submit([&](sycl::handler &h) {
             EntranceKernel(n, encoding_buf, error_samples_buf)(h);
-        });
+        }).wait();
+        std::cout << "Entrance kernel completed successfully" << std::endl;
         
-        // Submit the IFFT kernel that reads from and writes to pipes
-        auto ifft_event = q.submit([&](sycl::handler &h) {
-            h.depends_on(entrance_event);
+        // Then submit just the IFFT kernel
+        std::cout << "Submitting IFFT kernel alone..." << std::endl;
+        q.submit([&](sycl::handler &h) {
             IFFTKernel(n, logn)(h);
-        });
+        }).wait();
+        std::cout << "IFFT kernel completed successfully" << std::endl;
         
-        // Submit the Scale and Convert kernel that reads from pipes and writes to a pipe
+        // If we got here, continue with the rest
+        std::cout << "Submitting Scale and Convert kernel alone..." << std::endl;
         auto scale_event = q.submit([&](sycl::handler &h) {
-            h.depends_on(ifft_event);
             ScaleAndConvertKernel(n, scale)(h);
         });
         
-        // Submit the exit kernel that reads from a pipe and writes to a buffer
         auto exit_event = q.submit([&](sycl::handler &h) {
-            h.depends_on(scale_event);
             ExitKernel(n, pt_with_error_buf)(h);
         });
         
         // Wait for all operations to complete
+        std::cout << "Waiting for scale and exit kernels to complete..." << std::endl;
+        scale_event.wait();
+        std::cout << "Scale kernel completed successfully" << std::endl;
         exit_event.wait();
+        std::cout << "Exit kernel completed successfully" << std::endl;
         
         std::cout << "Pipelined operations completed successfully" << std::endl;
     } catch (sycl::exception const &e) {

@@ -28,12 +28,27 @@ public:
         // Capture necessary variables
         size_t kernel_n = n;
         
+        // Create stream for debug output
+        sycl::stream out(1024, 256, h);
+        
         h.single_task([=]() [[intel::kernel_args_restrict]] {
-            // Interleave writing to both pipes
+            out << "Entrance: Starting to write " << kernel_n << " values to pipes\n" << sycl::flush;
+            
+            // Process elements one at a time
             for (size_t i = 0; i < kernel_n; i++) {
+                // Write encoding data to IFFT pipe
                 EntranceToIFFTPipe::write(encoding[i]);
+                
+                // Write error sample to error pipe
                 EntranceToScaleErrorPipe::write(error_samples[i]);
+                
+                // Print progress at regular intervals
+                if (i == 0 || i == kernel_n-1 || i % 1000 == 0) {
+                    out << "Entrance: Written " << (i+1) << "/" << kernel_n << " values\n" << sycl::flush;
+                }
             }
+            
+            out << "Entrance: All values successfully written to pipes\n" << sycl::flush;
         });
     }
 };

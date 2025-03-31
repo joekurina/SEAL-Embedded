@@ -24,11 +24,40 @@ public:
         // Capture necessary variables
         size_t kernel_n = n;
         
+        // Create a stream for debug output
+        sycl::stream out(1024, 256, h);
+        
         h.single_task([=]() [[intel::kernel_args_restrict]] {
-            // Read results from pipe and write to buffer
+            out << "Exit: Starting to read " << kernel_n << " values from pipe\n" << sycl::flush;
+            
+            // Process elements in a streaming fashion
             for (size_t i = 0; i < kernel_n; i++) {
-                pt_with_error[i] = ScaleAndConvertToExitPipe::read();
+                // Read a single value from the pipe
+                int64_t value;
+                
+                // Log first read attempt for debugging
+                if (i == 0) {
+                    out << "Exit: Attempting to read first value from pipe\n" << sycl::flush;
+                }
+                
+                // Read value from pipe
+                value = ScaleAndConvertToExitPipe::read();
+                
+                // Log successful first read
+                if (i == 0) {
+                    out << "Exit: Successfully read first value from pipe\n" << sycl::flush;
+                }
+                
+                // Store the value in the output buffer
+                pt_with_error[i] = value;
+                
+                // Print progress at regular intervals
+                if (i == 0 || i == kernel_n-1 || i % 1000 == 0) {
+                    out << "Exit: Read and stored " << (i+1) << "/" << kernel_n << " values\n" << sycl::flush;
+                }
             }
+            
+            out << "Exit: All values successfully read and stored\n" << sycl::flush;
         });
     }
 };
