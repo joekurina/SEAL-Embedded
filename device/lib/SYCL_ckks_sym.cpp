@@ -6,7 +6,12 @@
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
+// Include the pipe definitions
+#include "SYCL_pipes.h"
+
 // Include the SYCL kernel headers
+#include "SYCL_entrance.h"
+#include "SYCL_exit.h"
 #include "SYCL_ifft.h"
 #include "SYCL_scale_and_convert.h"
 #include "SYCL_ntt.h"
@@ -16,6 +21,15 @@
 #include "SYCL_reduce_pte.h"
 
 // Function prototypes for internal functions used in SYCL_combined_encrypt
+void pipeline(
+                sycl::queue q, 
+                sycl::device device, 
+                size_t n, 
+                size_t logn, 
+                double scale, 
+                sycl::buffer<complex_double, 1>& encoding_buf, 
+                sycl::buffer<int8_t, 1>& error_samples_buf,
+                sycl::buffer<int64_t, 1>& pt_with_error_buf );
 void ntt_1(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec);
 void ntt_2(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec);
 void ntt_form_poly_mod_mult(uint32_t *a, const uint32_t *b, size_t n, uint32_t mod_value, const uint32_t* const_ratio);
@@ -60,22 +74,9 @@ extern "C" void SYCL_combined_encrypt(
     // Create a SYCL queue using the FPGA emulator selector.
     sycl::queue q{sycl::ext::intel::fpga_emulator_selector_v};
     auto device = q.get_device();
-    std::cout << "Running IFFT on device: "
-              << device.get_info<sycl::info::device::name>().c_str()
-              << std::endl;
     
-    // Execute IFFT kernel
-    q.submit([&](sycl::handler &h) {
-        IFFTKernel(n, logn, encoding_buf)(h);
-    }).wait();
-    
-    // Execute Scale and Convert kernel
-    std::cout << "Running Scale and Convert on device: "
-              << device.get_info<sycl::info::device::name>().c_str()
-              << std::endl;
-    q.submit([&](sycl::handler &h) {
-        ScaleAndConvertKernel(n, scale, encoding_buf, pt_with_error_buf, error_samples_buf)(h);
-    }).wait();
+    // Use the pipelined implementation for IFFT and ScaleAndConvert
+    pipeline(q, device, n, logn, scale, encoding_buf, error_samples_buf, pt_with_error_buf);
 
     // 1. Copy uniform polynomial to c1 output.
     std::memcpy(c1, uniform_poly_ptr, n * sizeof(uint32_t));
@@ -113,6 +114,56 @@ extern "C" void SYCL_combined_encrypt(
     poly_add_mod(c0_s, ntt_pte, n, mod_value);
 }
 
+// Implementation of the SYCL pipeline function
+void pipeline(
+    sycl::queue q,
+    sycl::device device,
+    size_t n,                           // Polynomial degree
+    size_t logn,                        // Log of polynomial degree
+    double scale,                       // Scale value
+    sycl::buffer<complex_double, 1>& encoding_buf,
+    sycl::buffer<int8_t, 1>& error_samples_buf,
+    sycl::buffer<int64_t, 1>& pt_with_error_buf
+) {
+    try {
+        std::cout << "Running pipelined kernels on device: "
+                  << device.get_info<sycl::info::device::name>().c_str()
+                  << std::endl;
+                  
+        // Submit the entrance kernel to read from buffers and write to pipes
+        auto entrance_event = q.submit([&](sycl::handler &h) {
+            EntranceKernel(n, encoding_buf, error_samples_buf)(h);
+        });
+        
+        // Submit the IFFT kernel that reads from and writes to pipes
+        auto ifft_event = q.submit([&](sycl::handler &h) {
+            h.depends_on(entrance_event);
+            IFFTKernel(n, logn)(h);
+        });
+        
+        // Submit the Scale and Convert kernel that reads from pipes and writes to a pipe
+        auto scale_event = q.submit([&](sycl::handler &h) {
+            h.depends_on(ifft_event);
+            ScaleAndConvertKernel(n, scale)(h);
+        });
+        
+        // Submit the exit kernel that reads from a pipe and writes to a buffer
+        auto exit_event = q.submit([&](sycl::handler &h) {
+            h.depends_on(scale_event);
+            ExitKernel(n, pt_with_error_buf)(h);
+        });
+        
+        // Wait for all operations to complete
+        exit_event.wait();
+        
+        std::cout << "Pipelined operations completed successfully" << std::endl;
+    } catch (sycl::exception const &e) {
+        std::cerr << "Caught a synchronous SYCL exception in pipeline: "
+                  << e.what() << "\n";
+        std::exit(1);
+    }
+}
+
 // Implementation of the first ntt function
 void ntt_1(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec) {
     // Optionally, add input validation assertions as needed
@@ -141,7 +192,7 @@ void ntt_1(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_rati
     }
 }
 
-// Implementation of the first ntt function
+// Implementation of the second ntt function
 void ntt_2(size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec) {
     // Optionally, add input validation assertions as needed
 

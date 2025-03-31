@@ -1,29 +1,34 @@
 #pragma once
 
 #include "SYCL_ckks_sym.h"
+#include "SYCL_pipes.h"
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
-// IFFT Kernel functor class
+// IFFT Kernel functor class that reads and writes to pipes
 class IFFTKernel {
 private:
     size_t n;
     size_t logn;
-    mutable sycl::buffer<complex_double, 1> encoding_acc;
 
 public:
-    IFFTKernel(size_t n_val, size_t logn_val, sycl::buffer<complex_double, 1>& encoding_buf)
-        : n(n_val), logn(logn_val), encoding_acc(encoding_buf) {}
+    IFFTKernel(size_t n_val, size_t logn_val)
+        : n(n_val), logn(logn_val) {}
     
     void operator()(sycl::handler& h) const {
-        // Get access to the buffer
-        auto encoding = encoding_acc.get_access<sycl::access::mode::read_write>(h);
-        
         // Capture necessary variables
         size_t kernel_n = n;
         size_t kernel_logn = logn;
         
         h.single_task([=]() [[intel::kernel_args_restrict]] {
+            // Local array to store input data
+            complex_double encoding[16384]; // Use max size that could be needed
+            
+            // Read data from input pipe
+            for (size_t i = 0; i < kernel_n; i++) {
+                encoding[i] = EntranceToIFFTPipe::read();
+            }
+            
             // Bit-reversal function
             auto bitrev = [](size_t input, size_t numbits) -> size_t {
                 size_t t = (((input & 0xaaaa) >> 1) | ((input & 0x5555) << 1));
@@ -55,6 +60,12 @@ public:
                         encoding[k + tt] = (u - v) * s;
                     }
                 }
+            }
+            
+            // Write the results to the output pipe
+            for (size_t i = 0; i < kernel_n; i++) {
+                // Write to pipe for next kernel
+                IFFTToScaleAndConvertPipe::write(encoding[i]);
             }
         });
     }
