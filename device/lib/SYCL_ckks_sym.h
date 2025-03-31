@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Define complex_double type for both C and C++ contexts
+// Define complex_double type
 #ifdef __cplusplus
 #include <complex>
 typedef std::complex<double> complex_double;
