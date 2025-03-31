@@ -10,8 +10,9 @@
 static uint32_t get_ntt_root(size_t n, uint32_t q);
 
 // Define pipe type for transferring data from IFFT to Scale & Convert
-// We use complex_double as the data type with a buffer size of 1024 elements
-using ifft_to_scale_pipe = sycl::ext::intel::pipe<class ifft_scale_pipe_id, complex_double, 1024>;
+// We use complex_double as the data type with a buffer size of 4096 elements
+using ifft_to_scale_pipe = sycl::ext::intel::pipe<class ifft_scale_pipe_id, complex_double, 4096>;
+using error_to_scale_pipe = sycl::ext::intel::pipe<class error_scale_pipe_id, uint8_t, 4096>;
 
 // IFFT Kernel functor class
 class IFFTKernel {
@@ -19,14 +20,21 @@ private:
     size_t n;
     size_t logn;
     mutable sycl::buffer<complex_double, 1> encoding_acc;
-
+    mutable sycl::buffer<int8_t, 1> error_samples_acc;
+    
 public:
-    IFFTKernel(size_t n_val, size_t logn_val, sycl::buffer<complex_double, 1>& encoding_buf)
-        : n(n_val), logn(logn_val), encoding_acc(encoding_buf) {}
+    // Updated constructor to accept error_samples_buf.
+    IFFTKernel(size_t n_val, size_t logn_val, 
+               sycl::buffer<complex_double, 1>& encoding_buf,
+               sycl::buffer<int8_t, 1>& error_samples_buf)
+        : n(n_val), logn(logn_val),
+          encoding_acc(encoding_buf),
+          error_samples_acc(error_samples_buf) {}
     
     void operator()(sycl::handler& h) const {
-        // Get access to the buffer
+        // Get access to the buffers
         auto encoding = encoding_acc.get_access<sycl::access::mode::read_write>(h);
+        auto error_samples = error_samples_acc.get_access<sycl::access::mode::read>(h);
         
         // Capture necessary variables
         size_t kernel_n = n;
@@ -66,9 +74,14 @@ public:
                 }
             }
 
-            // Write the results to the pipe
+            // Write the IFFT result to the pipe
             for (size_t i = 0; i < kernel_n; i++) {
                 ifft_to_scale_pipe::write(encoding[i]);
+            }
+
+            // Write the error samples to the pipe
+            for (size_t i = 0; i < kernel_n; i++) {
+                error_to_scale_pipe::write(error_samples[i]);
             }
         });
     }
@@ -80,36 +93,36 @@ private:
     size_t n;
     double scale;
     mutable sycl::buffer<int64_t, 1> pt_with_error_acc;
-    mutable sycl::buffer<int8_t, 1> error_samples_acc;
 
 public:
+    // Constructor now only takes the output buffer
     ScaleAndConvertKernel(size_t n_val, double scale_val,
-                            sycl::buffer<int64_t, 1>& pt_with_error_buf,
-                            sycl::buffer<int8_t, 1>& error_samples_buf)
+                            sycl::buffer<int64_t, 1>& pt_with_error_buf)
         : n(n_val), scale(scale_val),
-            pt_with_error_acc(pt_with_error_buf), error_samples_acc(error_samples_buf) {}
+            pt_with_error_acc(pt_with_error_buf) {}
 
     void operator()(sycl::handler& h) const {
         auto pt_with_error = pt_with_error_acc.get_access<sycl::access::mode::write>(h);
-        auto error_samples = error_samples_acc.get_access<sycl::access::mode::read>(h);
         size_t kernel_n = n;
         double kernel_scale = scale;
         
         h.single_task([=]() [[intel::kernel_args_restrict]] {
             double n_inv = kernel_scale / static_cast<double>(kernel_n);
             for (size_t i = 0; i < kernel_n; i++) {
-                // Read the next complex value from the pipe instead of from a buffer
+                // Read encoding value from the pipe
                 complex_double val = ifft_to_scale_pipe::read();
+                // Read the corresponding error sample from its pipe
+                int8_t err = error_to_scale_pipe::read();
+
                 double real_val = std::real(val);
                 double scaled = sycl::round(real_val * n_inv);
                 int64_t int_val = static_cast<int64_t>(scaled);
-                pt_with_error[i] = int_val + error_samples[i];
+                pt_with_error[i] = int_val + err;
             }
         });
     }
 };
 
-// This function would be called from SYCL_ckks_encode_encrypt_sym
 void pipe_based_ifft_and_scale(
     double scale,
     size_t n,
@@ -123,17 +136,18 @@ void pipe_based_ifft_and_scale(
     
     // Print device info
     std::cout << "Running IFFT and Scale on device: "
-              << q.get_device().get_info<sycl::info::device::name>().c_str()
-              << std::endl;
+                << q.get_device().get_info<sycl::info::device::name>().c_str()
+                << std::endl;
     
-    // Execute the kernels
+    // Execute the IFFT kernel (still uses error_samples_buf)
     q.submit([&](sycl::handler& h) {
-        IFFTKernel ifft_kernel(n, logn, encoding_buf);
+        IFFTKernel ifft_kernel(n, logn, encoding_buf, error_samples_buf);
         ifft_kernel(h);
     });
 
+    // Execute the ScaleAndConvert kernel (now without error_samples_buf)
     q.submit([&](sycl::handler& h) {
-        ScaleAndConvertKernel scale_kernel(n, scale, pt_with_error_buf, error_samples_buf);
+        ScaleAndConvertKernel scale_kernel(n, scale, pt_with_error_buf);
         scale_kernel(h);
     });
     
