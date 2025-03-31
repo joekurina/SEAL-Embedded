@@ -5,31 +5,40 @@
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
-// IFFT Kernel functor class that reads from and writes to pipes
 class IFFTKernel {
 private:
     size_t n;
     size_t logn;
+    mutable sycl::buffer<std::complex<double>, 1> encoding_acc;
+    mutable sycl::buffer<int8_t, 1> error_samples_acc;
 
 public:
-    IFFTKernel(size_t n_val, size_t logn_val)
-        : n(n_val), logn(logn_val) {}
+    IFFTKernel(size_t n_val, size_t logn_val,
+                sycl::buffer<std::complex<double>, 1>& encoding_buf,
+                sycl::buffer<int8_t, 1>& error_samples_buf)
+        : n(n_val), logn(logn_val), 
+            encoding_acc(encoding_buf), 
+            error_samples_acc(error_samples_buf) {}
     
     void operator()(sycl::handler& h) const {
+        // Get access to the buffers
+        auto encoding = encoding_acc.get_access<sycl::access::mode::read>(h);
+        auto error_samples = error_samples_acc.get_access<sycl::access::mode::read>(h);
+        
         // Capture necessary variables
         size_t kernel_n = n;
         size_t kernel_logn = logn;
         
         h.single_task([=]() [[intel::kernel_args_restrict]] {
             // Local array to store input data
-            std::complex<double> encoding[4096]; // 16384 max size that could be needed
+            std::complex<double> encoding_local[4096]; // Sized for your needs
             
-            // Read data from input pipe
+            // Read data directly from buffer
             for (size_t i = 0; i < kernel_n; i++) {
-                encoding[i] = EntranceToIFFTPipe::read();
+                encoding_local[i] = encoding[i];
             }
             
-            // Bit-reversal function
+            // Bit-reversal function - kept from your original code
             auto bitrev = [](size_t input, size_t numbits) -> size_t {
                 size_t t = (((input & 0xaaaa) >> 1) | ((input & 0x5555) << 1));
                 t        = (((t & 0xcccc) >> 2) | ((t & 0x3333) << 2));
@@ -38,34 +47,37 @@ public:
                 return (numbits == 0) ? 0 : (t >> (16 - numbits));
             };
             
-            // Root calculation function
+            // Root calculation function - kept from your original code
             auto calc_root_otf = [](size_t k, size_t m) -> std::complex<double> {
                 double angle = 2.0 * M_PI * static_cast<double>(k) / static_cast<double>(m);
                 return std::complex<double>(sycl::cos(angle), sycl::sin(angle));
             };
             
-            // IFFT implementation
+            // IFFT implementation - kept from your original code
             size_t tt = 1, h = kernel_n / 2;
             
-            for (size_t round = 0; round < kernel_logn; round++, tt *= 2, h /= 2) {
+            for (size_t i = 0; i < kernel_logn; i++, tt *= 2, h /= 2) {
                 for (size_t j = 0, kstart = 0; j < h; j++, kstart += 2 * tt) {
                     std::complex<double> s;
                     size_t br = bitrev(h + j, kernel_logn);
                     s = std::conj(calc_root_otf(br, kernel_n << 1));
                     
                     for (size_t k = kstart; k < kstart + tt; k++) {
-                        std::complex<double> u = encoding[k];
-                        std::complex<double> v = encoding[k + tt];
-                        encoding[k]      = u + v;
-                        encoding[k + tt] = (u - v) * s;
+                        std::complex<double> u = encoding_local[k];
+                        std::complex<double> v = encoding_local[k + tt];
+                        encoding_local[k]      = u + v;
+                        encoding_local[k + tt] = (u - v) * s;
                     }
                 }
             }
             
-            // Write the results to the output pipe
+            // Pass both the transformed values and error samples through pipes
             for (size_t i = 0; i < kernel_n; i++) {
-                // Write to pipe for next kernel
-                IFFTToScaleAndConvertPipe::write(encoding[i]);
+                // Write transformed encoding values to pipe
+                IFFTToScaleAndConvertPipe::write(encoding_local[i]);
+                
+                // Also pass the error samples through to the next kernel
+                IFFTErrorToScaleAndConvertPipe::write(error_samples[i]);
             }
         });
     }

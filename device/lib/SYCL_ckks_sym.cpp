@@ -6,8 +6,8 @@
 #include "SYCL_pipes.h"
 
 // Include the SYCL kernel headers
-#include "SYCL_entrance.h"
-#include "SYCL_exit.h"
+//#include "SYCL_entrance.h"
+//#include "SYCL_exit.h"
 #include "SYCL_ifft.h"
 #include "SYCL_scale_and_convert.h"
 #include "SYCL_ntt.h"
@@ -18,14 +18,14 @@
 
 // Function prototypes
 void pipeline(
-                sycl::queue q, 
-                sycl::device device, 
-                size_t n, 
-                size_t logn, 
-                double scale, 
-                sycl::buffer<std::complex<double>, 1>& encoding_buf, 
-                sycl::buffer<int8_t, 1>& error_samples_buf,
-                sycl::buffer<int64_t, 1>& pt_with_error_buf );
+    sycl::queue q,
+    size_t n, 
+    size_t logn, 
+    double scale, 
+    sycl::buffer<std::complex<double>, 1>& encoding_buf, 
+    sycl::buffer<int8_t, 1>& error_samples_buf,
+    sycl::buffer<int64_t, 1>& pt_with_error_buf
+);
 void ntt_1(sycl::queue q, size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec);
 void ntt_2(sycl::queue q, size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec);
 void ntt_form_poly_mod_mult(sycl::queue q, uint32_t *a, const uint32_t *b, size_t n, uint32_t mod_value, const uint32_t* const_ratio);
@@ -33,7 +33,7 @@ void poly_negate_mod(sycl::queue q, uint32_t *p, size_t n, uint32_t mod_value);
 void reduce_pte(sycl::queue q, const int64_t *conj_vals_int, size_t n, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *out);
 void poly_add_mod(sycl::queue q, uint32_t *p1, const uint32_t *p2, size_t n, uint32_t mod_value);
 
-// Implementation of the C-compatible function from SYCL_ckks_sym.h
+// Implementation of the C-compatible function
 extern "C" void SYCL_combined_encrypt(
     /* parms related values */
     size_t n,                           // Polynomial degree
@@ -52,27 +52,22 @@ extern "C" void SYCL_combined_encrypt(
     uint32_t* s_save,                   // Optional: Save expanded s (for testing)
     uint32_t* c1_save                   // Optional: Save c1 (for testing)
 ) {
-    // Create SYCL buffers from the input pointers.
+    // Create SYCL buffers from the input pointers
     sycl::buffer<std::complex<double>, 1> encoding_buf(encoding_buffer, sycl::range<1>(n));
-    sycl::buffer<int64_t, 1> pt_with_error_buf(pt_with_error, sycl::range<1>(n));
     sycl::buffer<int8_t, 1> error_samples_buf(error_samples, sycl::range<1>(n));
+    sycl::buffer<int64_t, 1> pt_with_error_buf(pt_with_error, sycl::range<1>(n));
     sycl::buffer<uint32_t, 1> expanded_s_buf(expanded_s, sycl::range<1>(n));
     sycl::buffer<uint32_t, 1> uniform_poly_buf(uniform_poly, sycl::range<1>(n));
 
-    // Get host-access pointers for the expanded secret key and uniform poly.
+    // Get host-access pointers for the expanded secret key and uniform poly
     auto expanded_s_ptr = expanded_s_buf.get_host_access().get_pointer();
     auto uniform_poly_ptr = uniform_poly_buf.get_host_access().get_pointer();
     
-    // ==============================================================
-    //   Generate ciphertext components
-    // ==============================================================
-    
-    // Create a SYCL queue using the FPGA emulator selector.
+    // Create a SYCL queue
     sycl::queue q{sycl::ext::intel::fpga_emulator_selector_v};
-    auto device = q.get_device();
     
-    // Use the pipelined implementation for IFFT and ScaleAndConvert
-    pipeline(q, device, n, logn, scale, encoding_buf, error_samples_buf, pt_with_error_buf);
+    // Execute the pipeline to perform IFFT, scaling, and conversion
+    pipeline(q, n, logn, scale, encoding_buf, error_samples_buf, pt_with_error_buf);
 
     // 1. Copy uniform polynomial to c1 output.
     std::memcpy(c1, uniform_poly_ptr, n * sizeof(uint32_t));
@@ -113,7 +108,6 @@ extern "C" void SYCL_combined_encrypt(
 // Function to perform the pipeline of kernels
 void pipeline(
     sycl::queue q,
-    sycl::device device,
     size_t n,                           
     size_t logn,                        
     double scale,                       
@@ -121,36 +115,21 @@ void pipeline(
     sycl::buffer<int8_t, 1>& error_samples_buf,
     sycl::buffer<int64_t, 1>& pt_with_error_buf
 ) {
-
     try {
-        // 1. Submit the EntranceKernel to read from buffers and write to pipes
-        auto entrance_event = q.submit([&](sycl::handler &h) {
-            EntranceKernel(n, encoding_buf, error_samples_buf)(h);
-        });
-
-        // 2. Submit the IFFTKernel to process data from pipes and write to pipes
+        // Submit the IFFT kernel
         auto ifft_event = q.submit([&](sycl::handler &h) {
-            // Make the IFFT kernel depend on the entrance kernel
-            h.depends_on(entrance_event);
-            IFFTKernel(n, logn)(h);
+            IFFTKernel(n, logn, encoding_buf, error_samples_buf)(h);
         });
 
-        // 3. Submit the ScaleAndConvertKernel to process data from pipes
+        // Submit the ScaleAndConvert kernel, depending on the IFFT kernel
         auto scale_event = q.submit([&](sycl::handler &h) {
             // Make the scale kernel depend on the IFFT kernel
             h.depends_on(ifft_event);
-            ScaleAndConvertKernel(n, scale)(h);
-        });
-
-        // 4. Submit the ExitKernel to read from pipes and write to the output buffer
-        auto exit_event = q.submit([&](sycl::handler &h) {
-            // Make the exit kernel depend on the scale kernel
-            h.depends_on(scale_event);
-            ExitKernel(n, pt_with_error_buf)(h);
+            ScaleAndConvertKernel(n, scale, pt_with_error_buf)(h);
         });
 
         // Wait for all kernels to complete
-        exit_event.wait();
+        scale_event.wait();
 
         std::cout << "Pipeline execution completed successfully." << std::endl;
 

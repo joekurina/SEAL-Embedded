@@ -4,21 +4,13 @@
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
-// Define pipe capacity - adjust based on N
-constexpr size_t PIPE_CAPACITY = 4096; // Reduced from 4096 for testing
+// Define pipes for communication between IFFT and ScaleAndConvert kernels
+constexpr size_t PIPE_CAPACITY = 4096; // Adjust based on your needs
 
-// Pipes for the Entrance to IFFT kernel
-using EntranceToIFFTPipe = 
-    sycl::ext::intel::pipe<class EntranceToIFFTPipeID, std::complex<double>, PIPE_CAPACITY>;
-
-// Pipe from Entrance to ScaleAndConvert for error samples
-using EntranceToScaleErrorPipe =
-    sycl::ext::intel::pipe<class EntranceToScaleErrorPipeID, int8_t, PIPE_CAPACITY>;
-
-// Pipe from IFFT to ScaleAndConvert kernel
+// Pipe from IFFT to ScaleAndConvert kernel for transformed values
 using IFFTToScaleAndConvertPipe = 
     sycl::ext::intel::pipe<class IFFTToScaleAndConvertPipeID, std::complex<double>, PIPE_CAPACITY>;
 
-// Pipe from ScaleAndConvert to Exit kernel
-using ScaleAndConvertToExitPipe =
-    sycl::ext::intel::pipe<class ScaleAndConvertToExitPipeID, int64_t, PIPE_CAPACITY>;
+// Pipe to pass error samples from IFFT to ScaleAndConvert kernel
+using IFFTErrorToScaleAndConvertPipe =
+    sycl::ext::intel::pipe<class IFFTErrorToScaleAndConvertPipeID, int8_t, PIPE_CAPACITY>;
