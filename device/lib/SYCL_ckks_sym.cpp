@@ -35,7 +35,6 @@ void poly_add_mod(sycl::queue q, uint32_t *p1, const uint32_t *p2, size_t n, uin
 
 // Implementation of the C-compatible function
 extern "C" void SYCL_combined_encrypt(
-    /* parms related values */
     size_t n,                           // Polynomial degree
     size_t logn,                        // Log of polynomial degree
     double scale,                       // Scale value
@@ -63,8 +62,15 @@ extern "C" void SYCL_combined_encrypt(
     auto expanded_s_ptr = expanded_s_buf.get_host_access().get_pointer();
     auto uniform_poly_ptr = uniform_poly_buf.get_host_access().get_pointer();
     
+    // Create a SYCL selector
+    #if FPGA_HARDWARE
+        auto selector = sycl::ext::intel::fpga_selector_v;
+    #else
+        auto selector = sycl::ext::intel::fpga_emulator_selector_v;
+    #endif
+
     // Create a SYCL queue
-    sycl::queue q{sycl::ext::intel::fpga_emulator_selector_v};
+    sycl::queue q{selector, fpga_tools::exception_handler, sycl::property::queue::enable_profiling()};
     
     // Execute the pipeline to perform IFFT, scaling, and conversion
     pipeline(q, n, logn, scale, encoding_buf, error_samples_buf, pt_with_error_buf);
