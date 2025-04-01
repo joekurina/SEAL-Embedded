@@ -16,6 +16,8 @@
 #include "SYCL_poly_neg.h"
 #include "SYCL_reduce_pte.h"
 
+using namespace sycl;
+
 // Forward declare all kernel names in global scope
 class IFFTKernel;
 class ScaleAndConvertKernel;
@@ -28,20 +30,20 @@ class ReduceSetPTEKernel;
 
 // Function prototypes
 void pipeline(
-    sycl::queue q,
+    queue q,
     size_t n, 
     size_t logn, 
     double scale, 
-    sycl::buffer<std::complex<double>, 1>& encoding_buf, 
-    sycl::buffer<int8_t, 1>& error_samples_buf,
-    sycl::buffer<int64_t, 1>& pt_with_error_buf
+    buffer<std::complex<double>, 1>& encoding_buf, 
+    buffer<int8_t, 1>& error_samples_buf,
+    buffer<int64_t, 1>& pt_with_error_buf
 );
-void ntt_1(sycl::queue q, size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec);
-void ntt_2(sycl::queue q, size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec);
-void ntt_form_poly_mod_mult(sycl::queue q, uint32_t *a, const uint32_t *b, size_t n, uint32_t mod_value, const uint32_t* const_ratio);
-void poly_negate_mod(sycl::queue q, uint32_t *p, size_t n, uint32_t mod_value);
-void reduce_pte(sycl::queue q, const int64_t *conj_vals_int, size_t n, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *out);
-void poly_add_mod(sycl::queue q, uint32_t *p1, const uint32_t *p2, size_t n, uint32_t mod_value);
+void ntt_1(queue q, size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec);
+void ntt_2(queue q, size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec);
+void ntt_form_poly_mod_mult(queue q, uint32_t *a, const uint32_t *b, size_t n, uint32_t mod_value, const uint32_t* const_ratio);
+void poly_negate_mod(queue q, uint32_t *p, size_t n, uint32_t mod_value);
+void reduce_pte(queue q, const int64_t *conj_vals_int, size_t n, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *out);
+void poly_add_mod(queue q, uint32_t *p1, const uint32_t *p2, size_t n, uint32_t mod_value);
 
 // Implementation of the C-compatible function
 extern "C" void SYCL_combined_encrypt(
@@ -62,11 +64,11 @@ extern "C" void SYCL_combined_encrypt(
     uint32_t* c1_save                   // Optional: Save c1 (for testing)
 ) {
     // Create SYCL buffers from the input pointers
-    sycl::buffer<std::complex<double>, 1> encoding_buf(encoding_buffer, sycl::range<1>(n));
-    sycl::buffer<int8_t, 1> error_samples_buf(error_samples, sycl::range<1>(n));
-    sycl::buffer<int64_t, 1> pt_with_error_buf(pt_with_error, sycl::range<1>(n));
-    sycl::buffer<uint32_t, 1> expanded_s_buf(expanded_s, sycl::range<1>(n));
-    sycl::buffer<uint32_t, 1> uniform_poly_buf(uniform_poly, sycl::range<1>(n));
+    buffer<std::complex<double>, 1> encoding_buf(encoding_buffer, range<1>(n));
+    buffer<int8_t, 1> error_samples_buf(error_samples, range<1>(n));
+    buffer<int64_t, 1> pt_with_error_buf(pt_with_error, range<1>(n));
+    buffer<uint32_t, 1> expanded_s_buf(expanded_s, range<1>(n));
+    buffer<uint32_t, 1> uniform_poly_buf(uniform_poly, range<1>(n));
 
     // Get host-access pointers for the expanded secret key and uniform poly
     auto expanded_s_ptr = expanded_s_buf.get_host_access().get_pointer();
@@ -74,13 +76,13 @@ extern "C" void SYCL_combined_encrypt(
     
     // Create a SYCL selector
     #if FPGA_HARDWARE
-        auto selector = sycl::ext::intel::fpga_selector_v;
+        auto selector = ext::intel::fpga_selector_v;
     #else
-        auto selector = sycl::ext::intel::fpga_emulator_selector_v;
+        auto selector = ext::intel::fpga_emulator_selector_v;
     #endif
 
     // Create a SYCL queue
-    sycl::queue q{selector, sycl::property::queue::enable_profiling()};
+    queue q{selector, property::queue::enable_profiling()};
     
     // Execute the pipeline to perform IFFT, scaling, and conversion
     pipeline(q, n, logn, scale, encoding_buf, error_samples_buf, pt_with_error_buf);
@@ -123,22 +125,22 @@ extern "C" void SYCL_combined_encrypt(
 
 // Function to perform the pipeline of kernels
 void pipeline(
-    sycl::queue q,
+    queue q,
     size_t n,                           
     size_t logn,                        
     double scale,                       
-    sycl::buffer<std::complex<double>, 1>& encoding_buf,
-    sycl::buffer<int8_t, 1>& error_samples_buf,
-    sycl::buffer<int64_t, 1>& pt_with_error_buf
+    buffer<std::complex<double>, 1>& encoding_buf,
+    buffer<int8_t, 1>& error_samples_buf,
+    buffer<int64_t, 1>& pt_with_error_buf
 ) {
     try {
         // Submit the IFFT kernel
-        auto ifft_event = q.submit([&](sycl::handler &h) {
+        auto ifft_event = q.submit([&](handler &h) {
             IFFTKernel(n, logn, encoding_buf, error_samples_buf)(h);
         });
 
-        // Submit the ScaleAndConvert kernel, depending on the IFFT kernel
-        auto scale_event = q.submit([&](sycl::handler &h) {
+        // Submit the ScaleAndConvert kernel
+        auto scale_event = q.submit([&](handler &h) {
             // Make the scale kernel depend on the IFFT kernel
             h.depends_on(ifft_event);
             ScaleAndConvertKernel(n, scale, pt_with_error_buf)(h);
@@ -149,7 +151,7 @@ void pipeline(
 
         std::cout << "Pipeline execution completed successfully." << std::endl;
 
-    } catch (sycl::exception const &e) {
+    } catch (exception const &e) {
         std::cerr << "Caught a synchronous SYCL exception in pipeline: "
                   << e.what() << std::endl;
         std::exit(1);
@@ -157,20 +159,20 @@ void pipeline(
 }
 
 // Function to perofrm the first NTT
-void ntt_1(sycl::queue q, size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec) {
+void ntt_1(queue q, size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec) {
     // Create a SYCL buffer for the vector
-    sycl::buffer<uint32_t, 1> vec_buf(vec, sycl::range<1>(n));
+    buffer<uint32_t, 1> vec_buf(vec, range<1>(n));
 
     try {
         std::cout << "Running First NTT on device: "
-                  << q.get_device().get_info<sycl::info::device::name>().c_str()
+                  << q.get_device().get_info<info::device::name>().c_str()
                   << std::endl;
 
         // Submit work using the NTTKernel_1
-        q.submit([&](sycl::handler &h) {
+        q.submit([&](handler &h) {
             NTTKernel_1(n, logn, mod_value, const_ratio, vec_buf)(h);
         }).wait();
-    } catch (sycl::exception const &e) {
+    } catch (exception const &e) {
         std::cerr << "Caught a synchronous SYCL exception in ntt: "
                   << e.what() << "\n";
         std::exit(1);
@@ -178,20 +180,20 @@ void ntt_1(sycl::queue q, size_t n, size_t logn, uint32_t mod_value, const uint3
 }
 
 // Function to perofrm the second NTT
-void ntt_2(sycl::queue q, size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec) {
+void ntt_2(queue q, size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec) {
     // Create a SYCL buffer for the vector
-    sycl::buffer<uint32_t, 1> vec_buf(vec, sycl::range<1>(n));
+    buffer<uint32_t, 1> vec_buf(vec, range<1>(n));
 
     try {
         std::cout << "Running Second NTT on device: "
-                  << q.get_device().get_info<sycl::info::device::name>().c_str()
+                  << q.get_device().get_info<info::device::name>().c_str()
                   << std::endl;
 
         // Submit work using the NTTKernel_2
-        q.submit([&](sycl::handler &h) {
+        q.submit([&](handler &h) {
             NTTKernel_2(n, logn, mod_value, const_ratio, vec_buf)(h);
         }).wait();
-    } catch (sycl::exception const &e) {
+    } catch (exception const &e) {
         std::cerr << "Caught a synchronous SYCL exception in ntt: "
                   << e.what() << "\n";
         std::exit(1);
@@ -199,21 +201,21 @@ void ntt_2(sycl::queue q, size_t n, size_t logn, uint32_t mod_value, const uint3
 }
 
 // Function to perform polynomial multiplication in NTT form
-void ntt_form_poly_mod_mult(sycl::queue q, uint32_t *a, const uint32_t *b, size_t n, uint32_t mod_value, const uint32_t* const_ratio) {
+void ntt_form_poly_mod_mult(queue q, uint32_t *a, const uint32_t *b, size_t n, uint32_t mod_value, const uint32_t* const_ratio) {
     // Create SYCL buffers
-    sycl::buffer<uint32_t, 1> a_buf(a, sycl::range<1>(n));
-    sycl::buffer<uint32_t, 1> b_buf(const_cast<uint32_t*>(b), sycl::range<1>(n));
+    buffer<uint32_t, 1> a_buf(a, range<1>(n));
+    buffer<uint32_t, 1> b_buf(const_cast<uint32_t*>(b), range<1>(n));
     
     try {
         // Print device info
         std::cout << "Running NTT Polynomial Multiplication on device: "
-                  << q.get_device().get_info<sycl::info::device::name>().c_str()
+                  << q.get_device().get_info<info::device::name>().c_str()
                   << std::endl;
         
         // Submit and execute the kernel
         q.submit(PolyMultNTTKernel(n, mod_value, const_ratio, a_buf, b_buf)).wait();
         
-    } catch (sycl::exception const &e) {
+    } catch (exception const &e) {
         std::cerr << "Caught a synchronous SYCL exception in poly_mult_mod_ntt_form_inpl: "
                   << e.what() << "\n";
         std::exit(1);
@@ -221,20 +223,20 @@ void ntt_form_poly_mod_mult(sycl::queue q, uint32_t *a, const uint32_t *b, size_
 }
 
 // Function to negate polynomial coefficients modulo q
-void poly_negate_mod(sycl::queue q, uint32_t *p, size_t n, uint32_t mod_value) {
+void poly_negate_mod(queue q, uint32_t *p, size_t n, uint32_t mod_value) {
     // Create SYCL buffer for the polynomial
-    sycl::buffer<uint32_t, 1> p_buf(p, sycl::range<1>(n));
+    buffer<uint32_t, 1> p_buf(p, range<1>(n));
 
     try {
         // Print device info
         std::cout << "Running Polynomial Negation on device: "
-                  << q.get_device().get_info<sycl::info::device::name>().c_str()
+                  << q.get_device().get_info<info::device::name>().c_str()
                   << std::endl;
         
         // Submit and execute the kernel
         q.submit(PolyNegModKernel(n, mod_value, p_buf)).wait();
         
-    } catch (sycl::exception const &e) {
+    } catch (exception const &e) {
         std::cerr << "Caught a synchronous SYCL exception in poly_neg_mod: "
                   << e.what() << "\n";
         std::exit(1);
@@ -242,22 +244,22 @@ void poly_negate_mod(sycl::queue q, uint32_t *p, size_t n, uint32_t mod_value) {
 }
     
 // Function to perform modular reduction of int64_t values
-void reduce_pte(sycl::queue q, const int64_t *conj_vals_int, size_t n, uint32_t mod_value, 
+void reduce_pte(queue q, const int64_t *conj_vals_int, size_t n, uint32_t mod_value, 
                 const uint32_t* const_ratio, uint32_t *out) {
     // Create SYCL buffers
-    sycl::buffer<int64_t, 1> conj_vals_int_buf(const_cast<int64_t*>(conj_vals_int), sycl::range<1>(n));
-    sycl::buffer<uint32_t, 1> out_buf(out, sycl::range<1>(n));
+    buffer<int64_t, 1> conj_vals_int_buf(const_cast<int64_t*>(conj_vals_int), range<1>(n));
+    buffer<uint32_t, 1> out_buf(out, range<1>(n));
 
     try {
         // Print device info
         std::cout << "Running Modular Reduction on device: "
-                    << q.get_device().get_info<sycl::info::device::name>().c_str()
+                    << q.get_device().get_info<info::device::name>().c_str()
                     << std::endl;
         
         // Submit and execute the kernel
         q.submit(ReduceSetPTEKernel(n, mod_value, const_ratio, conj_vals_int_buf, out_buf)).wait();
         
-    } catch (sycl::exception const &e) {
+    } catch (exception const &e) {
         std::cerr << "Caught a synchronous SYCL exception in reduce_set_pte: "
                     << e.what() << "\n";
         std::exit(1);
@@ -265,21 +267,21 @@ void reduce_pte(sycl::queue q, const int64_t *conj_vals_int, size_t n, uint32_t 
 }
     
 // Function to add two polynomials modulo q
-void poly_add_mod(sycl::queue q, uint32_t *p1, const uint32_t *p2, size_t n, uint32_t mod_value) {
+void poly_add_mod(queue q, uint32_t *p1, const uint32_t *p2, size_t n, uint32_t mod_value) {
     // Create SYCL buffers
-    sycl::buffer<uint32_t, 1> p1_buf(p1, sycl::range<1>(n));
-    sycl::buffer<uint32_t, 1> p2_buf(const_cast<uint32_t*>(p2), sycl::range<1>(n));
+    buffer<uint32_t, 1> p1_buf(p1, range<1>(n));
+    buffer<uint32_t, 1> p2_buf(const_cast<uint32_t*>(p2), range<1>(n));
 
     try {      
         // Print device info
         std::cout << "Running Polynomial Addition on device: "
-                    << q.get_device().get_info<sycl::info::device::name>().c_str()
+                    << q.get_device().get_info<info::device::name>().c_str()
                     << std::endl;
         
         // Submit and execute the kernel
         q.submit(PolyAddModKernel(n, mod_value, p1_buf, p2_buf)).wait();
         
-    } catch (sycl::exception const &e) {
+    } catch (exception const &e) {
         std::cerr << "Caught a synchronous SYCL exception in poly_add_mod_inpl: "
                     << e.what() << "\n";
         std::exit(1);
