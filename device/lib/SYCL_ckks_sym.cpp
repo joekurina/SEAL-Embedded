@@ -16,6 +16,16 @@
 #include "SYCL_poly_neg.h"
 #include "SYCL_reduce_pte.h"
 
+// Forward declare all kernel names in global scope
+class IFFTKernel;
+class ScaleAndConvertKernel;
+class NTTKernel_1;
+class NTTKernel_2;
+class PolyMultNTTKernel;
+class PolyAddModKernel;
+class PolyNegModKernel;
+class ReduceSetPTEKernel;
+
 // Function prototypes
 void pipeline(
     sycl::queue q,
