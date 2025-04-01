@@ -70,7 +70,7 @@ extern "C" void SYCL_combined_encrypt(
     #endif
 
     // Create a SYCL queue
-    sycl::queue q{selector, fpga_tools::exception_handler, sycl::property::queue::enable_profiling()};
+    sycl::queue q{selector, sycl::property::queue::enable_profiling()};
     
     // Execute the pipeline to perform IFFT, scaling, and conversion
     pipeline(q, n, logn, scale, encoding_buf, error_samples_buf, pt_with_error_buf);
