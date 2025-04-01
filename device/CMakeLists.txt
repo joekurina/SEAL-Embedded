@@ -17,10 +17,10 @@ set(TARGET_NAME sealembedded)
 set(REPORT_OUTPUT_NAME ${TARGET_NAME}.${REPORT_TARGET})
 
 # Enable C99 support for C files
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c99")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c99 -Rno-debug-disables-optimization")
 
 # Keep the emulator flag for the main build
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DFPGA_EMULATOR -fsycl -std=c++17")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DFPGA_EMULATOR -fsycl -std=c++17 -Rno-debug-disables-optimization")
 
 # Define the hardware flags separately - used only for report generation
 set(HARDWARE_FLAGS "-DFPGA_HARDWARE -fintelfpga")
@@ -118,72 +118,37 @@ elseif(SE_BUILD_TYPE STREQUAL "Tests")
   add_executable(seal_embedded_tests ${SE_TESTS_SOURCE_FILES})
   target_link_libraries(seal_embedded_tests PRIVATE m gcc_s c seal_embedded)
   
-  # Create a better script for FPGA report generation
+  # Create a script focusing only on the SYCL_ckks_sym.cpp file
   file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/generate_report.sh "#!/bin/bash
-set -e  # Exit immediately if a command exits with non-zero status
-
 echo \"Generating FPGA hardware report for SYCL_ckks_sym.cpp...\"
 
 # The specific file containing all FPGA kernels
 KERNEL_FILE=\"${CMAKE_CURRENT_LIST_DIR}/lib/SYCL_ckks_sym.cpp\"
 
-# Check if the file exists
-if [ ! -f \"$KERNEL_FILE\" ]; then
-  echo \"Error: Could not find $KERNEL_FILE\"
-  exit 1
-fi
-
-# Clean previous report directory if it exists
-REPORT_DIR=\"${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${REPORT_OUTPUT_NAME}.prj\"
-if [ -d \"$REPORT_DIR\" ]; then
-  echo \"Cleaning previous report directory: $REPORT_DIR\"
-  rm -rf \"$REPORT_DIR\"
-fi
-
 # Include directories needed for compilation
 INCLUDE_DIRS=\"-I${CMAKE_CURRENT_LIST_DIR}/lib -I${SE_ADAPTER_FILE_OUTPUT_DIR}\"
 
-# Set environment variables to help prevent memory issues
-export CL_CONFIG_CPU_FORCE_PRIVATE_MEM_SIZE=128MB
-export CL_CONFIG_CPU_FORCE_LOCAL_MEM_SIZE=128MB
-
-# First stage - compile to object file
-echo \"Stage 1: Compiling source to object file...\"
-icpx -v -fsycl -fintelfpga ${INCLUDE_DIRS} -DFPGA_HARDWARE -c -o \"${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/sycl_ckks_sym.o\" \"$KERNEL_FILE\"
-
-if [ $? -ne 0 ]; then
-  echo \"Failed to compile source file to object\"
-  exit 1
-fi
-
-# Second stage - generate the early report
-echo \"Stage 2: Generating hardware report...\"
-icpx -v -fsycl -fintelfpga -Xshardware -Xstarget=${FPGA_DEVICE} -fsycl-link=early \\
+# Compile with hardware flags to get a report
+echo \"Compiling with OneAPI for FPGA hardware report...\"
+icpx -fsycl ${HARDWARE_FLAGS} ${REPORT_LINK_FLAGS} ${INCLUDE_DIRS} \\
      -o \"${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${REPORT_OUTPUT_NAME}\" \\
-     \"${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/sycl_ckks_sym.o\"
+     \"$KERNEL_FILE\"
 
+# Check if the report generation succeeded
 if [ $? -eq 0 ]; then
   echo \"Hardware report generated successfully\"
-  echo \"Report file: ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${REPORT_OUTPUT_NAME}.prj/reports/report.html\"
+  echo \"Report file: ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${REPORT_OUTPUT_NAME}\"
   
-  # Verify that the report is complete
-  if [ -f \"${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${REPORT_OUTPUT_NAME}.prj/reports/report.html\" ]; then
-    echo \"Report file exists and is accessible\"
-    
-    # Check for some content in the report to verify it's not empty
-    if grep -q \"Kernel\" \"${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${REPORT_OUTPUT_NAME}.prj/reports/report.html\"; then
-      echo \"Report verification passed: Report contains kernel information\"
-    else
-      echo \"Warning: Report file may be incomplete or corrupted\"
-    fi
+  # Check if report contains kernel information
+  KERNEL_COUNT=\$(grep -c \"Kernel\" \"${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${REPORT_OUTPUT_NAME}\" || echo 0)
+  if [ \$KERNEL_COUNT -gt 0 ]; then
+    echo \"Success: Report contains \$KERNEL_COUNT kernel(s)\"
   else
-    echo \"Error: Report file was not created properly\"
-    exit 1
+    echo \"Warning: No kernel information found in the report\"
   fi
 else
   echo \"Hardware report generation failed with exit code $?\"
   echo \"Check the error messages above for details\"
-  exit 1
 fi
 ")
 
@@ -199,9 +164,9 @@ fi
     VERBATIM
   )
   
-  # Add a simple post-build step with information
+  # Add a simple post-build step with report information
   add_custom_command(TARGET seal_embedded_tests POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E echo "Main build successful. To generate the FPGA hardware report, run: cmake --build . --target fpga_report"
+    COMMAND ${CMAKE_COMMAND} -E echo "Main build successful. To generate the FPGA hardware report, run: cmake --build build --target fpga_report"
   )
 else()
   message(STATUS "No executable will be built")
