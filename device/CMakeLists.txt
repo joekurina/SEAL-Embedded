@@ -16,7 +16,7 @@ set(BASE_C_FLAGS "-std=c99 -Rno-debug-disables-optimization")
 set(BASE_CXX_FLAGS "-fsycl -std=c++17 -Rno-debug-disables-optimization")
 
 # --- Report-specific Flags ---
-set(REPORT_COMPILE_FLAGS "-fintelfpga") # Flag only
+set(REPORT_COMPILE_FLAGS "-fintelfpga")
 set(REPORT_LINK_FLAGS "-Xshardware -Xstarget=${FPGA_DEVICE} -fsycl-link=early")
 
 set(EMULATOR_COMPILE_FLAGS "-DFPGA_EMULATOR")
@@ -121,12 +121,10 @@ if(TARGET seal_embedded_tests OR SE_BUILD_TYPE STREQUAL "Lib")
               -v
               -fsycl
               -fintelfpga
-              -Xshardware             # Specify hardware target stage
-              -Xstarget=${FPGA_DEVICE} # Specify the device family
-              -fsycl-link=early       # Specify early link (report gen stage)
-              # Source file (relative path from build dir might be safer)
-              ../lib/SYCL_ckks_sym.cpp # Use path relative to WORKING_DIRECTORY
-              # *** No -o, no -D, no -I for this attempt ***
+              -Xshardware             
+              -Xstarget=${FPGA_DEVICE} 
+              -fsycl-link=early       
+              ../lib/SYCL_ckks_sym.cpp
       COMMENT "Compiling SYCL file to generate FPGA hardware report (minimal flags)"
       VERBATIM
       # Run command from build directory
@@ -152,5 +150,3 @@ add_compile_definitions(SE_DATA_PATH_LEN=${SE_ADAPTER_FILE_OUTPUT_DIR_DEVICE_LEN
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
   add_compile_definitions(SE_UNDEF_ASSERT_FORCE)
 endif()
-
-include_directories(/opt/intel/oneapi/2025.0/include/sycl/)
