@@ -31,14 +31,14 @@ public:
         
         h.single_task([=]() [[intel::kernel_args_restrict]] {
             // Local array to store input data
-            std::complex<double> encoding_local[4096]; // Sized for your needs
+            std::complex<double> encoding_local[4096];
             
             // Read data directly from buffer
             for (size_t i = 0; i < kernel_n; i++) {
                 encoding_local[i] = encoding[i];
             }
             
-            // Bit-reversal function - kept from your original code
+            // Bit-reversal function 
             auto bitrev = [](size_t input, size_t numbits) -> size_t {
                 size_t t = (((input & 0xaaaa) >> 1) | ((input & 0x5555) << 1));
                 t        = (((t & 0xcccc) >> 2) | ((t & 0x3333) << 2));
@@ -47,13 +47,13 @@ public:
                 return (numbits == 0) ? 0 : (t >> (16 - numbits));
             };
             
-            // Root calculation function - kept from your original code
+            // Root calculation function
             auto calc_root_otf = [](size_t k, size_t m) -> std::complex<double> {
                 double angle = 2.0 * M_PI * static_cast<double>(k) / static_cast<double>(m);
                 return std::complex<double>(sycl::cos(angle), sycl::sin(angle));
             };
             
-            // IFFT implementation - kept from your original code
+            // IFFT implementation 
             size_t tt = 1, h = kernel_n / 2;
             
             for (size_t i = 0; i < kernel_logn; i++, tt *= 2, h /= 2) {
