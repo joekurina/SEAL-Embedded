@@ -115,7 +115,7 @@ endif()
 
 # --- Define Custom Target for Report File Generation ---
 if(TARGET seal_embedded_tests OR SE_BUILD_TYPE STREQUAL "Lib")
-    add_custom_target(fpga_report_file
+    add_custom_target(fpga_report
       COMMAND ${CMAKE_CXX_COMPILER}
               # Essential flags only:
               -v
@@ -124,7 +124,13 @@ if(TARGET seal_embedded_tests OR SE_BUILD_TYPE STREQUAL "Lib")
               -Xshardware             
               -Xstarget=${FPGA_DEVICE} 
               -fsycl-link=early       
-              ../lib/SYCL_ckks_sym.cpp
+              ../lib/SYCL_ckks_sym.cpp 
+              ../lib/SYCL_pipeline.cpp 
+              ../lib/SYCL_ntt.cpp 
+              ../lib/SYCL_poly_add.cpp 
+              ../lib/SYCL_poly_mult.cpp 
+              ../lib/SYCL_poly_neg.cpp 
+              ../lib/SYCL_reduce_pte.cpp
       COMMENT "Compiling SYCL file to generate FPGA hardware report (minimal flags)"
       VERBATIM
       # Run command from build directory
@@ -135,12 +141,12 @@ endif()
 # --- Add Post-Build Message ---
 if (TARGET seal_embedded_tests)
     add_custom_command(TARGET seal_embedded_tests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E echo "Build successful for config ${CMAKE_BUILD_TYPE}. To generate report files, run: cmake --build ${CMAKE_BINARY_DIR} --target fpga_report_file"
+        COMMAND ${CMAKE_COMMAND} -E echo "Build successful for config ${CMAKE_BUILD_TYPE}. To generate report files, run: cmake --build build --target fpga_report"
     )
 endif()
 if(SE_BUILD_TYPE STREQUAL "Lib")
     add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E echo "Library build successful. To build test exe, change SE_BUILD_TYPE. To generate report files, run: cmake --build ${CMAKE_BINARY_DIR} --target fpga_report_file"
+        COMMAND ${CMAKE_COMMAND} -E echo "Library build successful. To build test exe, change SE_BUILD_TYPE. To generate report files, run: cmake --build build --target fpga_report"
     )
 endif()
 
