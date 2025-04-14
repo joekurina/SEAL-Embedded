@@ -14,3 +14,7 @@ using IFFTToScaleAndConvertPipe =
 // Pipe to pass error samples from IFFT to ScaleAndConvert kernel
 using IFFTErrorToScaleAndConvertPipe =
     sycl::ext::intel::pipe<class IFFTErrorToScaleAndConvertPipeID, int8_t, PIPE_CAPACITY>;
+
+// Pipe from ScaleAndConvertKernel to ReduceSetPTEKernel for plaintext+error values
+using ScaleToReducePipe =
+    sycl::ext::intel::pipe<class ScaleToReducePipeID, int64_t, PIPE_CAPACITY>;

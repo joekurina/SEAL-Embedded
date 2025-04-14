@@ -16,6 +16,8 @@
 #include "SYCL_poly_neg.h"
 #include "SYCL_reduce_pte.h"
 
+#include <iostream> // For std::cout, std::cerr, std::endl
+
 using namespace sycl;
 
 // Forward declare all kernel names in global scope
@@ -28,21 +30,22 @@ class PolyAddModKernel;
 class PolyNegModKernel;
 class ReduceSetPTEKernel;
 
-// Function prototypes
+// Function prototypes - MODIFY pipeline prototype
 void pipeline(
     queue q,
-    size_t n, 
-    size_t logn, 
-    double scale, 
-    buffer<std::complex<double>, 1>& encoding_buf, 
+    size_t n,
+    size_t logn,
+    double scale,
+    uint32_t mod_value,
+    const uint32_t* const_ratio,
+    buffer<std::complex<double>, 1>& encoding_buf,
     buffer<int8_t, 1>& error_samples_buf,
-    buffer<int64_t, 1>& pt_with_error_buf
+    buffer<uint32_t, 1>& ntt_pte_buf
 );
 void ntt_1(queue q, size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec);
 void ntt_2(queue q, size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec);
 void ntt_form_poly_mod_mult(queue q, uint32_t *a, const uint32_t *b, size_t n, uint32_t mod_value, const uint32_t* const_ratio);
 void poly_negate_mod(queue q, uint32_t *p, size_t n, uint32_t mod_value);
-void reduce_pte(queue q, const int64_t *conj_vals_int, size_t n, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *out);
 void poly_add_mod(queue q, uint32_t *p1, const uint32_t *p2, size_t n, uint32_t mod_value);
 
 // Implementation of the C-compatible function
@@ -66,12 +69,18 @@ extern "C" void SYCL_combined_encrypt(
     // 1. Copy uniform polynomial to c1 output.
     std::memcpy(c1, uniform_poly, n * sizeof(uint32_t));
 
-
+    // 2. Save c1 if requested for testing.
+    if (c1_save != nullptr) {
+        std::memcpy(c1_save, uniform_poly, n * sizeof(uint32_t));
+    }
+    
+    // 3. Copy expanded secret key to c0_s.
+    std::memcpy(c0_s, expanded_s, n * sizeof(uint32_t));
 
     // Create SYCL buffers from the input pointers
     buffer<std::complex<double>, 1> encoding_buf(encoding_buffer, range<1>(n));
     buffer<int8_t, 1> error_samples_buf(error_samples, range<1>(n));
-    buffer<int64_t, 1> pt_with_error_buf(pt_with_error, range<1>(n));
+    buffer<uint32_t, 1> ntt_pte_buf(ntt_pte, range(n));
 
     // Create a SYCL selector
     #if FPGA_HARDWARE
@@ -83,37 +92,28 @@ extern "C" void SYCL_combined_encrypt(
     // Create a SYCL queue
     queue q{selector, property::queue::enable_profiling()};
     
-    // Execute the pipeline to perform IFFT, scaling, and conversion
-    pipeline(q, n, logn, scale, encoding_buf, error_samples_buf, pt_with_error_buf);
+    // 4. Execute the pipeline to perform IFFT, scaling, and conversion
+    pipeline(q, n, logn, scale,
+        mod_value,                
+        const_ratio,
+        encoding_buf,
+        error_samples_buf,
+        ntt_pte_buf);
 
-    
-    // 2. Save c1 if requested for testing.
-    if (c1_save != nullptr) {
-        std::memcpy(c1_save, uniform_poly, n * sizeof(uint32_t));
-    }
-    
-    // 3. Copy expanded secret key to c0_s.
-    std::memcpy(c0_s, expanded_s, n * sizeof(uint32_t));
-
-    
-
-    // 4. Apply NTT to the secret key.
+    // 5. Apply NTT to the secret key.
     // Updated call passing explicit parameters.
     ntt_1(q, n, logn, mod_value, const_ratio, c0_s);
     
-    // 5. Save NTT(s) for later decryption if requested.
+    // 6. Save NTT(s) for later decryption if requested.
     if (s_save != nullptr) {
         std::memcpy(s_save, c0_s, n * sizeof(uint32_t));
     }
     
-    // 6. Calculate [a*s]_Rq using polynomial multiplication in NTT form.
+    // 7. Calculate [a*s]_Rq using polynomial multiplication in NTT form.
     ntt_form_poly_mod_mult(q, c0_s, c1, n, mod_value, const_ratio);
     
-    // 7. Negate [a*s]_Rq to get [-a*s]_Rq.
+    // 8. Negate [a*s]_Rq to get [-a*s]_Rq.
     poly_negate_mod(q, c0_s, n, mod_value);
-    
-    // 8. Process plaintext + error into ntt_pte.
-    reduce_pte(q, pt_with_error, n, mod_value, const_ratio, ntt_pte);
 
     // 9. Apply NTT to plaintext + error.
     ntt_2(q, n, logn, mod_value, const_ratio, ntt_pte);
@@ -123,41 +123,61 @@ extern "C" void SYCL_combined_encrypt(
 
 }
 
-// Function to perform the pipeline of kernels
+// Function to perform the pipeline of kernels using pipes
 void pipeline(
     queue q,
-    size_t n,                           
-    size_t logn,                        
-    double scale,                       
+    size_t n,
+    size_t logn,
+    double scale,
+    uint32_t mod_value,
+    const uint32_t* const_ratio,
     buffer<std::complex<double>, 1>& encoding_buf,
     buffer<int8_t, 1>& error_samples_buf,
-    buffer<int64_t, 1>& pt_with_error_buf
+    buffer<uint32_t, 1>& ntt_pte_buf
 ) {
+    std::cout << "[Pipeline] Starting..." << std::endl;
     try {
+
         // Submit the IFFT kernel
+        std::cout << "[Pipeline] Submitting IFFTKernel..." << std::endl;
         auto ifft_event = q.submit([&](handler &h) {
             IFFTKernel(n, logn, encoding_buf, error_samples_buf)(h);
         });
+        std::cout << "[Pipeline] Submitted IFFTKernel." << std::endl;
 
         // Submit the ScaleAndConvert kernel
+        std::cout << "[Pipeline] Submitting ScaleAndConvertKernel..." << std::endl;
         auto scale_event = q.submit([&](handler &h) {
-            // Make the scale kernel depend on the IFFT kernel
-            h.depends_on(ifft_event);
-            ScaleAndConvertKernel(n, scale, pt_with_error_buf)(h);
+            h.depends_on(ifft_event); 
+            ScaleAndConvertKernel(n, scale)(h);
         });
+        std::cout << "[Pipeline] Submitted ScaleAndConvertKernel." << std::endl;
 
-        // Wait for all kernels to complete
-        scale_event.wait();
+        // Submit the ReduceSetPTE kernel
+        std::cout << "[Pipeline] Submitting ReduceSetPTEKernel..." << std::endl;
+        auto reduce_event = q.submit([&](handler &h) {
+            ReduceSetPTEKernel(n, mod_value, const_ratio, ntt_pte_buf)(h);
+        });
+        std::cout << "[Pipeline] Submitted ReduceSetPTEKernel." << std::endl;
 
-        std::cout << "Pipeline execution completed successfully." << std::endl;
-        
+        // Wait for the last kernel in the sequence to complete
+        std::cout << "[Pipeline] Waiting for reduce_event..." << std::endl;
+        reduce_event.wait();
+        std::cout << "[Pipeline] reduce_event completed." << std::endl;
+
+        std::cout << "[Pipeline] Pipeline execution completed successfully." << std::endl;
 
     } catch (exception const &e) {
+
+        std::cout << "[Pipeline] EXCEPTION CAUGHT!" << std::endl;
         std::cerr << "Caught a synchronous SYCL exception in pipeline: "
                   << e.what() << std::endl;
         std::exit(1);
     }
+    // Print completion message
+    std::cout << "[Pipeline] Exiting." << std::endl;
 }
+
 
 // Function to perofrm the first NTT
 void ntt_1(queue q, size_t n, size_t logn, uint32_t mod_value, const uint32_t* const_ratio, uint32_t *vec) {
@@ -240,29 +260,6 @@ void poly_negate_mod(queue q, uint32_t *p, size_t n, uint32_t mod_value) {
     } catch (exception const &e) {
         std::cerr << "Caught a synchronous SYCL exception in poly_neg_mod: "
                   << e.what() << "\n";
-        std::exit(1);
-    }
-}
-    
-// Function to perform modular reduction of int64_t values
-void reduce_pte(queue q, const int64_t *conj_vals_int, size_t n, uint32_t mod_value, 
-                const uint32_t* const_ratio, uint32_t *out) {
-    // Create SYCL buffers
-    buffer<int64_t, 1> conj_vals_int_buf(const_cast<int64_t*>(conj_vals_int), range<1>(n));
-    buffer<uint32_t, 1> out_buf(out, range<1>(n));
-
-    try {
-        // Print device info
-        std::cout << "Running Modular Reduction on device: "
-                    << q.get_device().get_info<info::device::name>().c_str()
-                    << std::endl;
-        
-        // Submit and execute the kernel
-        q.submit(ReduceSetPTEKernel(n, mod_value, const_ratio, conj_vals_int_buf, out_buf)).wait();
-        
-    } catch (exception const &e) {
-        std::cerr << "Caught a synchronous SYCL exception in reduce_set_pte: "
-                    << e.what() << "\n";
         std::exit(1);
     }
 }
