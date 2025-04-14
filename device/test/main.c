@@ -35,6 +35,8 @@ extern void test_ckks_encode_encrypt_asym(size_t n, size_t nprimes);
 extern void test_ckks_api_sym(void);
 extern void test_ckks_api_asym(void);
 
+extern void SYCL_test_ckks_encode_encrypt_sym(size_t n, size_t nprimes);
+
 #ifdef SE_ON_SPHERE_M4
 #include "mt3620.h"
 #include "os_hal_gpt.h"
@@ -126,7 +128,7 @@ int main(void)
     //test_ckks_encode(n);
 
     // -- Main tests
-    test_ckks_encode_encrypt_sym(n, nprimes);
+    SYCL_test_ckks_encode_encrypt_sym(n, nprimes);
     //test_ckks_encode_encrypt_asym(n, nprimes);
 
     // -- Run these tests to verify api

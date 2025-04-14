@@ -63,6 +63,10 @@ extern "C" void SYCL_combined_encrypt(
     uint32_t* s_save,                   // Optional: Save expanded s (for testing)
     uint32_t* c1_save                   // Optional: Save c1 (for testing)
 ) {
+    // 1. Copy uniform polynomial to c1 output.
+    std::memcpy(c1, uniform_poly, n * sizeof(uint32_t));
+
+
 
     // Create SYCL buffers from the input pointers
     buffer<std::complex<double>, 1> encoding_buf(encoding_buffer, range<1>(n));
@@ -82,9 +86,7 @@ extern "C" void SYCL_combined_encrypt(
     // Execute the pipeline to perform IFFT, scaling, and conversion
     pipeline(q, n, logn, scale, encoding_buf, error_samples_buf, pt_with_error_buf);
 
-    // 1. Copy uniform polynomial to c1 output.
-    std::memcpy(c1, uniform_poly, n * sizeof(uint32_t));
-
+    
     // 2. Save c1 if requested for testing.
     if (c1_save != nullptr) {
         std::memcpy(c1_save, uniform_poly, n * sizeof(uint32_t));
@@ -92,6 +94,8 @@ extern "C" void SYCL_combined_encrypt(
     
     // 3. Copy expanded secret key to c0_s.
     std::memcpy(c0_s, expanded_s, n * sizeof(uint32_t));
+
+    
 
     // 4. Apply NTT to the secret key.
     // Updated call passing explicit parameters.
@@ -146,6 +150,7 @@ void pipeline(
         scale_event.wait();
 
         std::cout << "Pipeline execution completed successfully." << std::endl;
+        
 
     } catch (exception const &e) {
         std::cerr << "Caught a synchronous SYCL exception in pipeline: "
