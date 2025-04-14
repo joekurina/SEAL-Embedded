@@ -63,17 +63,12 @@ extern "C" void SYCL_combined_encrypt(
     uint32_t* s_save,                   // Optional: Save expanded s (for testing)
     uint32_t* c1_save                   // Optional: Save c1 (for testing)
 ) {
+
     // Create SYCL buffers from the input pointers
     buffer<std::complex<double>, 1> encoding_buf(encoding_buffer, range<1>(n));
     buffer<int8_t, 1> error_samples_buf(error_samples, range<1>(n));
     buffer<int64_t, 1> pt_with_error_buf(pt_with_error, range<1>(n));
-    buffer<uint32_t, 1> expanded_s_buf(expanded_s, range<1>(n));
-    buffer<uint32_t, 1> uniform_poly_buf(uniform_poly, range<1>(n));
 
-    // Get host-access pointers for the expanded secret key and uniform poly
-    auto expanded_s_ptr = expanded_s_buf.get_host_access().get_pointer();
-    auto uniform_poly_ptr = uniform_poly_buf.get_host_access().get_pointer();
-    
     // Create a SYCL selector
     #if FPGA_HARDWARE
         auto selector = ext::intel::fpga_selector_v;
@@ -88,16 +83,16 @@ extern "C" void SYCL_combined_encrypt(
     pipeline(q, n, logn, scale, encoding_buf, error_samples_buf, pt_with_error_buf);
 
     // 1. Copy uniform polynomial to c1 output.
-    std::memcpy(c1, uniform_poly_ptr, n * sizeof(uint32_t));
-    
+    std::memcpy(c1, uniform_poly, n * sizeof(uint32_t));
+
     // 2. Save c1 if requested for testing.
     if (c1_save != nullptr) {
-        std::memcpy(c1_save, uniform_poly_ptr, n * sizeof(uint32_t));
+        std::memcpy(c1_save, uniform_poly, n * sizeof(uint32_t));
     }
     
     // 3. Copy expanded secret key to c0_s.
-    std::memcpy(c0_s, expanded_s_ptr, n * sizeof(uint32_t));
-    
+    std::memcpy(c0_s, expanded_s, n * sizeof(uint32_t));
+
     // 4. Apply NTT to the secret key.
     // Updated call passing explicit parameters.
     ntt_1(q, n, logn, mod_value, const_ratio, c0_s);
@@ -121,6 +116,7 @@ extern "C" void SYCL_combined_encrypt(
     
     // 10. Add to ciphertext.
     poly_add_mod(q, c0_s, ntt_pte, n, mod_value);
+
 }
 
 // Function to perform the pipeline of kernels
