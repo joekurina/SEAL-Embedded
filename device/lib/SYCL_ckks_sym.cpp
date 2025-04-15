@@ -30,7 +30,7 @@ class PolyAddModKernel;
 class PolyNegModKernel;
 class ReduceSetPTEKernel;
 
-// Function prototypes - MODIFY pipeline prototype
+// Function prototypes
 void pipeline(
     queue q,
     size_t n,
@@ -93,12 +93,17 @@ extern "C" void SYCL_combined_encrypt(
     queue q{selector, property::queue::enable_profiling()};
     
     // 4. Execute the pipeline to perform IFFT, scaling, and conversion
-    pipeline(q, n, logn, scale,
-        mod_value,                
+    pipeline(
+        q, 
+        n, 
+        logn, 
+        scale,
+        mod_value,
         const_ratio,
         encoding_buf,
         error_samples_buf,
-        ntt_pte_buf);
+        ntt_pte_buf
+    );
 
     // 5. Apply NTT to the secret key.
     // Updated call passing explicit parameters.
@@ -148,7 +153,7 @@ void pipeline(
         // Submit the ScaleAndConvert kernel
         std::cout << "[Pipeline] Submitting ScaleAndConvertKernel..." << std::endl;
         auto scale_event = q.submit([&](handler &h) {
-            h.depends_on(ifft_event); 
+            h.depends_on(ifft_event);
             ScaleAndConvertKernel(n, scale)(h);
         });
         std::cout << "[Pipeline] Submitted ScaleAndConvertKernel." << std::endl;
@@ -156,6 +161,7 @@ void pipeline(
         // Submit the ReduceSetPTE kernel
         std::cout << "[Pipeline] Submitting ReduceSetPTEKernel..." << std::endl;
         auto reduce_event = q.submit([&](handler &h) {
+            h.depends_on(scale_event);
             ReduceSetPTEKernel(n, mod_value, const_ratio, ntt_pte_buf)(h);
         });
         std::cout << "[Pipeline] Submitted ReduceSetPTEKernel." << std::endl;
@@ -168,13 +174,11 @@ void pipeline(
         std::cout << "[Pipeline] Pipeline execution completed successfully." << std::endl;
 
     } catch (exception const &e) {
-
         std::cout << "[Pipeline] EXCEPTION CAUGHT!" << std::endl;
         std::cerr << "Caught a synchronous SYCL exception in pipeline: "
                   << e.what() << std::endl;
         std::exit(1);
     }
-    // Print completion message
     std::cout << "[Pipeline] Exiting." << std::endl;
 }
 

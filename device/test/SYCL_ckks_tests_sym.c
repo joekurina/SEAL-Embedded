@@ -28,9 +28,8 @@ void SYCL_test_ckks_sym_base(size_t n, size_t nprimes, bool test_message)
     parms.sample_s      = false;
     parms.is_asymmetric = false;
     parms.small_s       = true;
-    bool encode_only    = false;  // this only works if s is not not persistent
+    bool encode_only    = false; 
 
-    // -- Make sure we didn't set this accidentally
     if (!parms.sample_s) se_assert(parms.small_s);
 
     // Pointers for individually allocated buffers
@@ -107,7 +106,6 @@ void SYCL_test_ckks_sym_base(size_t n, size_t nprimes, bool test_message)
     if (!temp_test_mem) { allocation_success = false; goto cleanup; }
 
     // --- Setup Parameters ---
-    // Note: ckks_setup might try to use index_map if certain flags are set.
     // Ensure index_map is allocated above if needed by ckks_setup config.
     ckks_setup(n, nprimes, index_map, &parms);
     print_test_banner("Symmetric Encryption", &parms);

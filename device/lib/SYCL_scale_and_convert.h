@@ -17,11 +17,17 @@ public:
         : n(n_val), scale(scale_val) {}
 
     void operator()(sycl::handler& h) const {
+        // Create a stream for debugging
+        sycl::stream kernel_dbg_stream(1024 * 8, 256, h);
+        
         // Capture necessary variables
         size_t kernel_n = n;
         double kernel_scale = scale;
 
         h.single_task([=]() [[intel::kernel_args_restrict]] {
+            // Announce the start of the kernel
+            kernel_dbg_stream << "ScaleAndConvertKernel: Starting..." << sycl::endl;
+
             // Calculate scaling factor
             double n_inv = kernel_scale / static_cast<double>(kernel_n);
 
@@ -41,9 +47,21 @@ public:
                 int64_t int_val = static_cast<int64_t>(scaled);
                 int64_t result = int_val + error_value;
 
-                // Write to output pipe
-                ScaleToReducePipe::write(result);
+                // Write to output pipe and announce the first and last iterations
+                if (i == 0 || i == kernel_n - 1) {
+                    kernel_dbg_stream << "ScaleAndConvertKernel: Loop i=" << i << ", writing " << result << " to ScaleToReducePipe..." << sycl::endl;
+                }
+                
+                 ScaleToReducePipe::write(result);
+                
+                if (i == 0 || i == kernel_n - 1) {
+                      kernel_dbg_stream << "ScaleAndConvertKernel: Loop i=" << i << ", write complete." << sycl::endl;
+                }
             }
+
+            // Announce completion
+            kernel_dbg_stream << "ScaleAndConvertKernel: Loop finished after " << kernel_n << " iterations." << sycl::endl;
+            kernel_dbg_stream << "ScaleAndConvertKernel: Finished." << sycl::endl;
         });
     }
 };

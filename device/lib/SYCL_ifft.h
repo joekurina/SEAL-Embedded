@@ -16,7 +16,7 @@ public:
     IFFTKernel(size_t n_val, size_t logn_val,
                 sycl::buffer<std::complex<double>, 1>& encoding_buf,
                 sycl::buffer<int8_t, 1>& error_samples_buf)
-        : n(n_val), logn(logn_val), 
+        :   n(n_val), logn(logn_val), 
             encoding_acc(encoding_buf), 
             error_samples_acc(error_samples_buf) {}
     
@@ -25,11 +25,16 @@ public:
         auto encoding = encoding_acc.get_access<sycl::access::mode::read>(h);
         auto error_samples = error_samples_acc.get_access<sycl::access::mode::read>(h);
         
+        // Create a stream for debugging
+        sycl::stream kernel_dbg_stream(1024 * 4, 256, h); // Debug stream
+
         // Capture necessary variables
         size_t kernel_n = n;
         size_t kernel_logn = logn;
         
         h.single_task([=]() [[intel::kernel_args_restrict]] {
+            kernel_dbg_stream << "IFFTKernel: Starting..." << sycl::endl; // Debug message
+            
             // Local array to store input data
             std::complex<double> encoding_local[4096];
             
@@ -37,6 +42,8 @@ public:
             for (size_t i = 0; i < kernel_n; i++) {
                 encoding_local[i] = encoding[i];
             }
+
+            kernel_dbg_stream << "IFFTKernel: Data loaded." << sycl::endl; // Debug message
             
             // Bit-reversal function 
             auto bitrev = [](size_t input, size_t numbits) -> size_t {
@@ -71,6 +78,8 @@ public:
                 }
             }
             
+            kernel_dbg_stream << "IFFTKernel: Computation finished. Writing to pipes..." << sycl::endl; // Debug message
+
             // Pass both the transformed values and error samples through pipes
             for (size_t i = 0; i < kernel_n; i++) {
                 // Write transformed encoding values to pipe
@@ -79,6 +88,8 @@ public:
                 // Also pass the error samples through to the next kernel
                 IFFTErrorToScaleAndConvertPipe::write(error_samples[i]);
             }
+
+            kernel_dbg_stream << "IFFTKernel: Finished writing to pipes." << sycl::endl; // Debug message
         });
     }
 };

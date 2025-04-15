@@ -22,6 +22,10 @@ public:
           out_acc(out_buf) {} // Output buffer initializer
 
     void operator()(sycl::handler& h) const {
+        // Create a stream for debugging
+        sycl::stream kernel_dbg_stream(1024 * 8, 256, h);
+
+        // Get access to the output buffer
         auto out = out_acc.get_access<sycl::access::mode::write>(h);
 
         // Capture necessary variables
@@ -30,6 +34,8 @@ public:
         const uint32_t* kernel_const_ratio = const_ratio;
 
         h.single_task([=]() [[intel::kernel_args_restrict]] {
+            kernel_dbg_stream << "ReduceSetPTEKernel: Kernel Started..." << sycl::endl; // Debug message
+
             // Process each coefficient
             for (size_t i = 0; i < kernel_n; i++) {
                 // Read input value from the pipe:
@@ -104,7 +110,15 @@ public:
 
                 // Store the result
                 out[i] = result;
+                
+                // Debug message for first and last iterations
+                if (i == 0 || i == kernel_n -1) {
+                    kernel_dbg_stream << "ReduceSetPTEKernel: Loop i=" << i << ", wrote result to output buffer." << sycl::endl;
+                }
             }
+            // Debug message after loop completion
+            kernel_dbg_stream << "ReduceSetPTEKernel: Loop finished after " << kernel_n << " iterations." << sycl::endl;
+            kernel_dbg_stream << "ReduceSetPTEKernel: Finished." << sycl::endl;
         });
     }
 };
