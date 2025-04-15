@@ -63,15 +63,15 @@ extern "C" void SYCL_combined_encrypt(
     uint32_t* s_save,                   // Optional: Save expanded s (for testing)
     uint32_t* c1_save                   // Optional: Save c1 (for testing)
 ) {
-    // 1. Copy uniform polynomial to c1 output.
+    // Copy uniform polynomial to c1 output.
     std::memcpy(c1, uniform_poly, n * sizeof(uint32_t));
 
-     // 2. Save c1 if requested for testing.
+     // Save c1 if requested for testing.
      if (c1_save != nullptr) {
         std::memcpy(c1_save, uniform_poly, n * sizeof(uint32_t));
     }
     
-    // 3. Copy expanded secret key to c0_s.
+    // Copy expanded secret key to c0_s.
     std::memcpy(c0_s, expanded_s, n * sizeof(uint32_t));
 
     // Create SYCL buffers from the input pointers
@@ -91,34 +91,36 @@ extern "C" void SYCL_combined_encrypt(
 
     // =========== PIPELINE 1 ===========
     
-    // 4. Execute the pipeline to perform IFFT, scaling, and conversion
+    // Execute the pipeline to perform IFFT, scaling, and conversion
     pipeline(q, n, logn, scale, encoding_buf, error_samples_buf, pt_with_error_buf);
 
-    // 5. Process plaintext + error into ntt_pte.
+    // Process plaintext + error into ntt_pte.
     reduce_pte(q, pt_with_error, n, mod_value, const_ratio, ntt_pte);
 
-    // 6. Apply NTT to plaintext + error.
+    // Apply NTT to plaintext + error.
     ntt_2(q, n, logn, mod_value, const_ratio, ntt_pte);
 
     // =========== PIPELINE 2 ===========
 
-    // 7. Apply NTT to the secret key.
+    // Apply NTT to the secret key.
     ntt_1(q, n, logn, mod_value, const_ratio, c0_s);
     
-    // 8. Save NTT(s) for later decryption if requested.
+    // Save NTT(s) for later decryption if requested.
     if (s_save != nullptr) {
         std::memcpy(s_save, c0_s, n * sizeof(uint32_t));
     }
     
-    // 9. Calculate [a*s]_Rq using polynomial multiplication in NTT form.
+    // Calculate [a*s]_Rq using polynomial multiplication in NTT form.
     ntt_form_poly_mod_mult(q, c0_s, c1, n, mod_value, const_ratio);
     
-    // 10. Negate [a*s]_Rq to get [-a*s]_Rq.
+    // Negate [a*s]_Rq to get [-a*s]_Rq.
     poly_negate_mod(q, c0_s, n, mod_value);
 
     // =========== PIPELINES CONVERGE ===========
     
-    // 11. Add to ciphertext.
+    // Add [-a*s]_Rq to the NTT of the plaintext + error.
+    // This is the final ciphertext component.
+    // The result is stored in c0_s.
     poly_add_mod(q, c0_s, ntt_pte, n, mod_value);
 
 }
