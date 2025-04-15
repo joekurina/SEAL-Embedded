@@ -66,7 +66,13 @@ extern "C" void SYCL_combined_encrypt(
     // 1. Copy uniform polynomial to c1 output.
     std::memcpy(c1, uniform_poly, n * sizeof(uint32_t));
 
-
+     // 2. Save c1 if requested for testing.
+     if (c1_save != nullptr) {
+        std::memcpy(c1_save, uniform_poly, n * sizeof(uint32_t));
+    }
+    
+    // 3. Copy expanded secret key to c0_s.
+    std::memcpy(c0_s, expanded_s, n * sizeof(uint32_t));
 
     // Create SYCL buffers from the input pointers
     buffer<std::complex<double>, 1> encoding_buf(encoding_buffer, range<1>(n));
@@ -82,43 +88,37 @@ extern "C" void SYCL_combined_encrypt(
 
     // Create a SYCL queue
     queue q{selector, property::queue::enable_profiling()};
+
+    // =========== PIPELINE 1 ===========
     
-    // Execute the pipeline to perform IFFT, scaling, and conversion
+    // 4. Execute the pipeline to perform IFFT, scaling, and conversion
     pipeline(q, n, logn, scale, encoding_buf, error_samples_buf, pt_with_error_buf);
 
-    
-    // 2. Save c1 if requested for testing.
-    if (c1_save != nullptr) {
-        std::memcpy(c1_save, uniform_poly, n * sizeof(uint32_t));
-    }
-    
-    // 3. Copy expanded secret key to c0_s.
-    std::memcpy(c0_s, expanded_s, n * sizeof(uint32_t));
+    // 5. Process plaintext + error into ntt_pte.
+    reduce_pte(q, pt_with_error, n, mod_value, const_ratio, ntt_pte);
 
-    
+    // 6. Apply NTT to plaintext + error.
+    ntt_2(q, n, logn, mod_value, const_ratio, ntt_pte);
 
-    // 4. Apply NTT to the secret key.
-    // Updated call passing explicit parameters.
+    // =========== PIPELINE 2 ===========
+
+    // 7. Apply NTT to the secret key.
     ntt_1(q, n, logn, mod_value, const_ratio, c0_s);
     
-    // 5. Save NTT(s) for later decryption if requested.
+    // 8. Save NTT(s) for later decryption if requested.
     if (s_save != nullptr) {
         std::memcpy(s_save, c0_s, n * sizeof(uint32_t));
     }
     
-    // 6. Calculate [a*s]_Rq using polynomial multiplication in NTT form.
+    // 9. Calculate [a*s]_Rq using polynomial multiplication in NTT form.
     ntt_form_poly_mod_mult(q, c0_s, c1, n, mod_value, const_ratio);
     
-    // 7. Negate [a*s]_Rq to get [-a*s]_Rq.
+    // 10. Negate [a*s]_Rq to get [-a*s]_Rq.
     poly_negate_mod(q, c0_s, n, mod_value);
-    
-    // 8. Process plaintext + error into ntt_pte.
-    reduce_pte(q, pt_with_error, n, mod_value, const_ratio, ntt_pte);
 
-    // 9. Apply NTT to plaintext + error.
-    ntt_2(q, n, logn, mod_value, const_ratio, ntt_pte);
+    // =========== PIPELINES CONVERGE ===========
     
-    // 10. Add to ciphertext.
+    // 11. Add to ciphertext.
     poly_add_mod(q, c0_s, ntt_pte, n, mod_value);
 
 }
