@@ -129,6 +129,7 @@ extern "C" void SYCL_combined_encrypt(
 }
 
 // Function to perform the pipeline of kernels using pipes
+// CHANGE THIS TO LAUNCH KERNELS WITHOUT DEPENDENCY
 void pipeline(
     queue q,
     size_t n,
@@ -153,7 +154,7 @@ void pipeline(
         // Submit the ScaleAndConvert kernel
         std::cout << "[Pipeline] Submitting ScaleAndConvertKernel..." << std::endl;
         auto scale_event = q.submit([&](handler &h) {
-            h.depends_on(ifft_event);
+            //h.depends_on(ifft_event);
             ScaleAndConvertKernel(n, scale)(h);
         });
         std::cout << "[Pipeline] Submitted ScaleAndConvertKernel." << std::endl;
@@ -161,15 +162,15 @@ void pipeline(
         // Submit the ReduceSetPTE kernel
         std::cout << "[Pipeline] Submitting ReduceSetPTEKernel..." << std::endl;
         auto reduce_event = q.submit([&](handler &h) {
-            h.depends_on(scale_event);
+            //h.depends_on(scale_event);
             ReduceSetPTEKernel(n, mod_value, const_ratio, ntt_pte_buf)(h);
         });
         std::cout << "[Pipeline] Submitted ReduceSetPTEKernel." << std::endl;
 
         // Wait for the last kernel in the sequence to complete
-        std::cout << "[Pipeline] Waiting for reduce_event..." << std::endl;
-        reduce_event.wait();
-        std::cout << "[Pipeline] reduce_event completed." << std::endl;
+        //std::cout << "[Pipeline] Waiting for the ReduceSetPTEKernel to complete..." << std::endl;
+        //reduce_event.wait();
+        //std::cout << "[Pipeline] The ReduceSetPTEKernel has completed!" << std::endl;
 
         std::cout << "[Pipeline] Pipeline execution completed successfully." << std::endl;
 

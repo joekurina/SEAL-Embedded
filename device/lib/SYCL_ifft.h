@@ -28,9 +28,10 @@ public:
         // Create a stream for debugging
         sycl::stream kernel_dbg_stream(1024 * 4, 256, h); // Debug stream
 
-        // Capture necessary variables
+        // Capture kernel variables
         size_t kernel_n = n;
         size_t kernel_logn = logn;
+
         
         h.single_task([=]() [[intel::kernel_args_restrict]] {
             kernel_dbg_stream << "IFFTKernel: Starting..." << sycl::endl; // Debug message
