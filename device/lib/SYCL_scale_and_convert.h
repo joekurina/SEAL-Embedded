@@ -3,8 +3,9 @@
 #include "SYCL_ckks_sym.h"
 #include "SYCL_pipes.h"
 #include <sycl/sycl.hpp>
-#include <sycl/ext/intel/fpga_extensions.hpp>
-#include <cstdint>
+#include <sycl/ext/intel/fpga_extensions.hpp> // Provides printf according to user
+
+#include <cstdint> // Original include
 
 // Kernel for scaling and conversion to integers, then adding the error samples
 class ScaleAndConvertKernel {
@@ -17,23 +18,22 @@ public:
         : n(n_val), scale(scale_val) {}
 
     void operator()(sycl::handler& h) const {
-        // Create a stream for debugging
-        sycl::stream kernel_dbg_stream(1024 * 8, 256, h);
 
         // Capture kernel variables
         size_t kernel_n = n;
         double kernel_scale = scale;
-        
+
         h.single_task([=]() [[intel::kernel_args_restrict]] {
-            // Announce the start of the kernel
-            kernel_dbg_stream << "ScaleAndConvertKernel: Starting..." << sycl::endl;
+            // Restore printf: Announce the start of the kernel
+            sycl::ext::oneapi::experimental::printf("ScaleAndConvertKernel: Starting...\n");
 
             // Calculate scaling factor
             double n_inv = kernel_scale / static_cast<double>(kernel_n);
 
-            // Process each element
-            for (size_t i = 0; i < kernel_n; i++) {
+            // Process each element using original loop structure
+            for (size_t i = 0; i < kernel_n; /* i incremented below */ ) {
                 // Blocking Read from input pipes
+                // Assuming std::complex is available via includes
                 std::complex<double> encoded_value = IFFTToScaleAndConvertPipe::read();
                 int8_t error_value = IFFTErrorToScaleAndConvertPipe::read();
 
@@ -47,27 +47,28 @@ public:
                 int64_t int_val = static_cast<int64_t>(scaled);
                 int64_t result = int_val + error_value;
 
-                // *** Non-Blocking Write Loop ***
-                // Keep trying to write the 'result' for the current 'i' until successful.
+                // *** Restore Original Non-Blocking Write Loop ***
                 bool write_succeeded = false;
                 bool first_write_attempt = true;
 
                 while (!write_succeeded) {
-                    // Debug message only on the first attempt for this 'i' to avoid spam
+                    // Restore printf: Debug message only on the first attempt for this 'i' to avoid spam
                     if (first_write_attempt && (i == 0 || i == kernel_n - 1)) {
-                        kernel_dbg_stream << "ScaleAndConvertKernel: Loop i=" << i
-                                          << ", attempting write of " << result
-                                          << " to ScaleToReducePipe..." << sycl::endl;
+                        // Assuming i is size_t (%zu) and result is int64_t (%lld)
+                       sycl::ext::oneapi::experimental::printf(
+                           "ScaleAndConvertKernel: Loop i=%zu, attempting write of %lld to ScaleToReducePipe...\n",
+                           i, result);
                     }
 
                     // Attempt a non-blocking write
                     ScaleToReducePipe::write(result, write_succeeded);
 
                     if (write_succeeded) {
-                        // Write succeeded for the first and last iterations
+                        // Restore printf: Write succeeded for the first and last iterations
                         if (i == 0 || i == kernel_n - 1) {
-                            kernel_dbg_stream << "ScaleAndConvertKernel: Loop i=" << i
-                                              << ", write SUCCESS." << sycl::endl;
+                            // Assuming i is size_t (%zu)
+                           sycl::ext::oneapi::experimental::printf(
+                               "ScaleAndConvertKernel: Loop i=%zu, write SUCCESS.\n", i);
                         }
                         // Exit the inner retry loop
                         break;
@@ -77,13 +78,16 @@ public:
                     }
                 } // End of non-blocking write retry loop for index i
 
-                // Increment main loop counter only after the write for index 'i' has succeeded.
+                // Increment main loop counter only after the write for index 'i' has succeeded. (Original logic)
                 i++;
+
             } // End of main loop
 
-            // Announce completion
-            kernel_dbg_stream << "ScaleAndConvertKernel: Loop finished after " << kernel_n << " iterations." << sycl::endl;
-            kernel_dbg_stream << "ScaleAndConvertKernel: Finished." << sycl::endl;
+            // Restore printf: Announce completion
+            // Assuming kernel_n is size_t (%zu)
+            sycl::ext::oneapi::experimental::printf(
+                "ScaleAndConvertKernel: Loop finished after %zu iterations.\n", kernel_n);
+            sycl::ext::oneapi::experimental::printf("ScaleAndConvertKernel: Finished.\n");
         });
     }
 };

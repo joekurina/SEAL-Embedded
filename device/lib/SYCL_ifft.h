@@ -4,6 +4,7 @@
 #include "SYCL_pipes.h"
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
+//#include <sycl/ext/oneapi/experimental/print.hpp> // Added for printf
 
 class IFFTKernel {
 private:
@@ -25,8 +26,8 @@ public:
         auto encoding = encoding_acc.get_access<sycl::access::mode::read>(h);
         auto error_samples = error_samples_acc.get_access<sycl::access::mode::read>(h);
         
-        // Create a stream for debugging
-        sycl::stream kernel_dbg_stream(1024 * 4, 256, h); // Debug stream
+        // Create a stream for debugging -- DON'T USE STREAMS IN FPGA KERNELS
+        //sycl::stream kernel_dbg_stream(1024 * 4, 256, h); // Debug stream
 
         // Capture kernel variables
         size_t kernel_n = n;
@@ -34,7 +35,9 @@ public:
 
         
         h.single_task([=]() [[intel::kernel_args_restrict]] {
-            kernel_dbg_stream << "IFFTKernel: Starting..." << sycl::endl; // Debug message
+            //kernel_dbg_stream << "IFFTKernel: Starting..." << sycl::endl; // Debug message
+            // Debug message using printf
+            sycl::ext::oneapi::experimental::printf("IFFTKernel: Starting...\n");
             
             // Local array to store input data
             std::complex<double> encoding_local[4096];
@@ -44,7 +47,7 @@ public:
                 encoding_local[i] = encoding[i];
             }
 
-            kernel_dbg_stream << "IFFTKernel: Data loaded." << sycl::endl; // Debug message
+            //kernel_dbg_stream << "IFFTKernel: Data loaded." << sycl::endl; // Debug message
             
             // Bit-reversal function 
             auto bitrev = [](size_t input, size_t numbits) -> size_t {
@@ -79,7 +82,9 @@ public:
                 }
             }
             
-            kernel_dbg_stream << "IFFTKernel: Computation finished. Writing to pipes..." << sycl::endl; // Debug message
+            //kernel_dbg_stream << "IFFTKernel: Computation finished. Writing to pipes..." << sycl::endl; // Debug message
+            // Use printf instead of stream
+            sycl::ext::oneapi::experimental::printf("IFFTKernel: Computation finished. Writing to pipes...\n");
 
             // Pass both the transformed values and error samples through pipes
             for (size_t i = 0; i < kernel_n; i++) {
@@ -90,7 +95,9 @@ public:
                 IFFTErrorToScaleAndConvertPipe::write(error_samples[i]);
             }
 
-            kernel_dbg_stream << "IFFTKernel: Finished writing to pipes." << sycl::endl; // Debug message
+            //kernel_dbg_stream << "IFFTKernel: Finished writing to pipes." << sycl::endl; // Debug message
+            // Use printf instead of stream
+            sycl::ext::oneapi::experimental::printf("IFFTKernel: Finished writing to pipes.\n");
         });
     }
 };

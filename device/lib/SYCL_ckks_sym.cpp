@@ -9,12 +9,13 @@
 //#include "SYCL_entrance.h"
 //#include "SYCL_exit.h"
 #include "SYCL_ifft.h"
-#include "SYCL_scale_and_convert.h"
+//#include "SYCL_scale_and_convert.h"
 #include "SYCL_ntt.h"
 #include "SYCL_poly_mult.h"
 #include "SYCL_poly_add.h"
 #include "SYCL_poly_neg.h"
-#include "SYCL_reduce_pte.h"
+//#include "SYCL_reduce_pte.h"
+#include "SYCL_scale_and_reduce.h"
 
 #include <iostream> // For std::cout, std::cerr, std::endl
 
@@ -22,13 +23,14 @@ using namespace sycl;
 
 // Forward declare all kernel names in global scope
 class IFFTKernel;
-class ScaleAndConvertKernel;
+//class ScaleAndConvertKernel;
 class NTTKernel_1;
 class NTTKernel_2;
 class PolyMultNTTKernel;
 class PolyAddModKernel;
 class PolyNegModKernel;
-class ReduceSetPTEKernel;
+//class ReduceSetPTEKernel;
+class ScaleAndReduceKernel;
 
 // Function prototypes
 void pipeline(
@@ -129,7 +131,6 @@ extern "C" void SYCL_combined_encrypt(
 }
 
 // Function to perform the pipeline of kernels using pipes
-// CHANGE THIS TO LAUNCH KERNELS WITHOUT DEPENDENCY
 void pipeline(
     queue q,
     size_t n,
@@ -139,38 +140,33 @@ void pipeline(
     const uint32_t* const_ratio,
     buffer<std::complex<double>, 1>& encoding_buf,
     buffer<int8_t, 1>& error_samples_buf,
-    buffer<uint32_t, 1>& ntt_pte_buf
+    buffer<uint32_t, 1>& ntt_pte_buf // This is the output buffer
 ) {
     std::cout << "[Pipeline] Starting..." << std::endl;
     try {
 
-        // Submit the IFFT kernel
+        // Submit the IFFT kernel (Remains the same)
         std::cout << "[Pipeline] Submitting IFFTKernel..." << std::endl;
         auto ifft_event = q.submit([&](handler &h) {
             IFFTKernel(n, logn, encoding_buf, error_samples_buf)(h);
         });
         std::cout << "[Pipeline] Submitted IFFTKernel." << std::endl;
 
-        // Submit the ScaleAndConvert kernel
-        std::cout << "[Pipeline] Submitting ScaleAndConvertKernel..." << std::endl;
-        auto scale_event = q.submit([&](handler &h) {
-            //h.depends_on(ifft_event);
-            ScaleAndConvertKernel(n, scale)(h);
+        // Submit the NEW MERGED ScaleAndReduce kernel
+        std::cout << "[Pipeline] Submitting ScaleAndReduceKernel..." << std::endl;
+        auto scale_reduce_event = q.submit([&](handler &h) { // <<< New event variable name
+            // This kernel depends on IFFTKernel completing
+            h.depends_on(ifft_event);
+            // Construct the new kernel with combined arguments
+            ScaleAndReduceKernel(n, scale, mod_value, const_ratio, ntt_pte_buf)(h); // <<< Use new kernel
         });
-        std::cout << "[Pipeline] Submitted ScaleAndConvertKernel." << std::endl;
+        std::cout << "[Pipeline] Submitted ScaleAndReduceKernel." << std::endl; // <<< Updated message
 
-        // Submit the ReduceSetPTE kernel
-        std::cout << "[Pipeline] Submitting ReduceSetPTEKernel..." << std::endl;
-        auto reduce_event = q.submit([&](handler &h) {
-            //h.depends_on(scale_event);
-            ReduceSetPTEKernel(n, mod_value, const_ratio, ntt_pte_buf)(h);
-        });
-        std::cout << "[Pipeline] Submitted ReduceSetPTEKernel." << std::endl;
+        // <<< REMOVE the old submission blocks for ScaleAndConvertKernel >>>
+        // <<< and ReduceSetPTEKernel                                   >>>
 
-        // Wait for the last kernel in the sequence to complete
-        //std::cout << "[Pipeline] Waiting for the ReduceSetPTEKernel to complete..." << std::endl;
-        //reduce_event.wait();
-        //std::cout << "[Pipeline] The ReduceSetPTEKernel has completed!" << std::endl;
+        // Wait for the last kernel in the sequence (now the merged kernel) to complete
+        scale_reduce_event.wait(); // <<< Wait on the new event
 
         std::cout << "[Pipeline] Pipeline execution completed successfully." << std::endl;
 

@@ -5,7 +5,7 @@
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
 // Define pipes for communication between IFFT and ScaleAndConvert kernels
-constexpr size_t PIPE_CAPACITY = 4096; // Adjust based on your needs
+constexpr size_t PIPE_CAPACITY = 8192; // Adjust based on your needs 4096
 
 // Pipe from IFFT to ScaleAndConvert kernel for transformed values
 using IFFTToScaleAndConvertPipe = 
