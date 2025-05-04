@@ -16,5 +16,9 @@ using IFFTErrorToScaleAndConvertPipe =
     sycl::ext::intel::pipe<class IFFTErrorToScaleAndConvertPipeID, int8_t, PIPE_CAPACITY>;
 
 // Pipe from ScaleAndConvertKernel to ReduceSetPTEKernel for plaintext+error values
-using ScaleToReducePipe =
-    sycl::ext::intel::pipe<class ScaleToReducePipeID, int64_t, PIPE_CAPACITY>;
+//using ScaleToReducePipe =
+//    sycl::ext::intel::pipe<class ScaleToReducePipeID, int64_t, PIPE_CAPACITY>;
+
+// Pipe from ScaleAndReduceKernel to NTTKernel_1
+//using ScaleReduceToNTT1Pipe =
+//    sycl::ext::intel::pipe<class ScaleReduceToNTT1PipeID, uint32_t, PIPE_CAPACITY>;

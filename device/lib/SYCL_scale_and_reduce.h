@@ -36,10 +36,10 @@ public:
         uint32_t kernel_mod_val = mod_value;
         const uint32_t* kernel_const_ratio = const_ratio;
 
-        sycl::ext::oneapi::experimental::printf("ScaleAndReduceKernel: Starting...\n");
+        //sycl::ext::oneapi::experimental::printf("ScaleAndReduceKernel: Starting...\n");
 
         h.single_task([=]() [[intel::kernel_args_restrict]] {
-            sycl::ext::oneapi::experimental::printf("ScaleAndReduceKernel: Kernel Started...\n");
+            //sycl::ext::oneapi::experimental::printf("ScaleAndReduceKernel: Kernel Started...\n");
 
             // Pre-calculate scaling factor (from ScaleAndConvertKernel)
             double n_inv = kernel_scale / static_cast<double>(kernel_n);
@@ -61,7 +61,6 @@ public:
                 int64_t intermediate_result = int_val + error_value; // This value was previously written to ScaleToReducePipe
 
                 //sycl::ext::oneapi::experimental::printf("ScaleAndReduceKernel: Intermediate value (i=%zu) = %lld\n", i, intermediate_result);
-
 
                 // --- Part 2: Logic from ReduceSetPTEKernel ---
                 // Use 'intermediate_result' directly instead of reading from pipe
@@ -131,12 +130,16 @@ public:
 
                 // Store the final result directly to the output buffer
                 out[i] = final_result;
+                
+                // Write the final result to the output pipe
+                //ScaleReduceToNTT1Pipe::write(final_result);
 
                 // Debug message for first and last iterations
                 if (i == 0 || i == kernel_n -1) {
                      sycl::ext::oneapi::experimental::printf(
                         "ScaleAndReduceKernel: Loop i=%zu, wrote result %u to output buffer.\n", i, final_result);
                 }
+                
             } // End of for loop
 
             // Debug message after loop completion
