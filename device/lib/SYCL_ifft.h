@@ -89,10 +89,10 @@ public:
             // Pass both the transformed values and error samples through pipes
             for (size_t i = 0; i < kernel_n; i++) {
                 // Write transformed encoding values to pipe
-                IFFTToScaleAndConvertPipe::write(encoding_local[i]);
+                IFFTToScaleAndReducePipe::write(encoding_local[i]);
                 
                 // Also pass the error samples through to the next kernel
-                IFFTErrorToScaleAndConvertPipe::write(error_samples[i]);
+                IFFTErrorToScaleAndReducePipe::write(error_samples[i]);
             }
 
             //kernel_dbg_stream << "IFFTKernel: Finished writing to pipes." << sycl::endl; // Debug message

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "SYCL_ckks_sym.h" // For complex_double if needed, etc.
-#include "SYCL_pipes.h"    // For IFFTToScaleAndConvertPipe, IFFTErrorToScaleAndConvertPipe
+#include "SYCL_pipes.h"    // For IFFTToScaleAndReducePipe, IFFTErrorToScaleAndConvertPipe
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
 #include <cstdint>
@@ -51,8 +51,8 @@ public:
 
                 // Blocking Read from input pipes coming from IFFTKernel
                 //sycl::ext::oneapi::experimental::printf("ScaleAndReduceKernel: Reading from IFFT Pipes (i=%zu)...\n", i);
-                std::complex<double> encoded_value = IFFTToScaleAndConvertPipe::read();
-                int8_t error_value = IFFTErrorToScaleAndConvertPipe::read();
+                std::complex<double> encoded_value = IFFTToScaleAndReducePipe::read();
+                int8_t error_value = IFFTErrorToScaleAndReducePipe::read();
 
                 // Get real part, scale, round, add error
                 double real_val = encoded_value.real();

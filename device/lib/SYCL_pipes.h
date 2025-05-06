@@ -8,12 +8,12 @@
 constexpr size_t PIPE_CAPACITY = 8192; // Adjust based on your needs 4096
 
 // Pipe from IFFT to ScaleAndConvert kernel for transformed values
-using IFFTToScaleAndConvertPipe = 
-    sycl::ext::intel::pipe<class IFFTToScaleAndConvertPipeID, std::complex<double>, PIPE_CAPACITY>;
+using IFFTToScaleAndReducePipe = 
+    sycl::ext::intel::pipe<class IFFTToScaleAndReducePipeID, std::complex<double>, PIPE_CAPACITY>;
 
 // Pipe to pass error samples from IFFT to ScaleAndConvert kernel
-using IFFTErrorToScaleAndConvertPipe =
-    sycl::ext::intel::pipe<class IFFTErrorToScaleAndConvertPipeID, int8_t, PIPE_CAPACITY>;
+using IFFTErrorToScaleAndReducePipe =
+    sycl::ext::intel::pipe<class IFFTErrorToScaleAndReducePipeID, int8_t, PIPE_CAPACITY>;
 
 // Pipe from ScaleAndConvertKernel to ReduceSetPTEKernel for plaintext+error values
 //using ScaleToReducePipe =
