@@ -142,9 +142,9 @@ public:
                 // out[i] = final_result; // Writing to buffer
                 ScaleReduceToNTT1Pipe::write(final_result); 
                 
-                if (i == 0 || i == kernel_n -1) { // Use kernel_n for loop condition checks
+                if (i == 0 || i == kernel_n -1) {
                      sycl::ext::oneapi::experimental::printf(
-                         "ScaleAndReduceKernel: Loop i=%zu, input encoded_real=%f, error=%d, wrote result %u to ScaleReduceToNTT1Pipe.\n", // MODIFIED printf
+                         "ScaleAndReduceKernel: Loop i=%zu, input encoded_real=%f, error=%d, wrote result %u to ScaleReduceToNTT1Pipe.\n",
                          i, encoded_value.real(), error_value, final_result);
                 }
             } // End of for loop
