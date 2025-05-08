@@ -1,18 +1,18 @@
 #pragma once
 
-#include "SYCL_ckks_sym.h" // For complex_double etc.
-#include "SYCL_pipes.h"    // For pipe definitions (including ScaleReduceToNTT1Pipe and PIPE_CAPACITY)
+#include "SYCL_ckks_sym.h"
+#include "SYCL_pipes.h"
 #include <sycl/sycl.hpp>
-#include <sycl/ext/intel/fpga_extensions.hpp> // For fpga_extensions if specific attributes are used
+#include <sycl/ext/intel/fpga_extensions.hpp>
 #include <cstdint>
 
 // Merged Kernel: Performs Scaling/Conversion and Reduction
 class ScaleAndReduceKernel {
 private:
-    size_t n; // This 'n' will determine the actual number of elements to process
-    double scale;            // Argument from ScaleAndConvertKernel
-    uint32_t mod_value;      // Argument from ReduceSetPTEKernel
-    const uint32_t* const_ratio; // Argument from ReduceSetPTEKernel
+    size_t n;
+    double scale;
+    uint32_t mod_value;
+    const uint32_t* const_ratio;
     // mutable sycl::buffer<uint32_t, 1> out_acc; // REMOVED: Output buffer
 
 public:
