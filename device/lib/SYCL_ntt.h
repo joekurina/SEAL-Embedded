@@ -3,7 +3,7 @@
 #include "SYCL_ckks_sym.h"
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
-//#include "SYCL_pipes.h" // Include pipes definition
+#include "SYCL_pipes.h" // Include pipes definition
 #include <cstdio>
 #include <cstdlib>
 
@@ -14,16 +14,18 @@ private:
     size_t logn;
     uint32_t mod_value;
     const uint32_t* const_ratio;
-    mutable sycl::buffer<uint32_t, 1> vec_acc;
+    mutable sycl::buffer<uint32_t, 1> result_out_acc; // MODIFIED: For output
 
 public:
     NTTKernel_1(size_t n_val, size_t logn_val, uint32_t mod_val, 
-                const uint32_t* const_ratio_val, sycl::buffer<uint32_t, 1>& vec_buf)
-        : n(n_val), logn(logn_val), mod_value(mod_val), const_ratio(const_ratio_val), vec_acc(vec_buf) {}
+                const uint32_t* const_ratio_val, 
+                sycl::buffer<uint32_t, 1>& result_output_buf) // MODIFIED: Constructor takes output buffer
+        : n(n_val), logn(logn_val), mod_value(mod_val), 
+            const_ratio(const_ratio_val), result_out_acc(result_output_buf) {} // MODIFIED
     
     void operator()(sycl::handler& h) const {
-        // Get access to the buffer
-        auto data = vec_acc.get_access<sycl::access::mode::read_write>(h); // write instead of read_write for pipes
+        // Get write access to the output buffer
+        auto out_data_accessor = result_out_acc.get_access<sycl::access::mode::write>(h); // ADDED
         
         // Capture necessary variables
         size_t kernel_n = n;
@@ -31,26 +33,34 @@ public:
         uint32_t kernel_mod_val = mod_value;
         const uint32_t* kernel_const_ratio = const_ratio;
 
-        //sycl::ext::oneapi::experimental::printf("NTTKernel_1: Starting kernel...\n");
+        sycl::ext::oneapi::experimental::printf("NTTKernel_1: Starting kernel...\n"); // Original commentary preserved
         
         h.single_task([=]() [[intel::kernel_args_restrict]] {
-            sycl::ext::oneapi::experimental::printf("NTTKernel_1: Kernel Started...\n");
-            /*
+            sycl::ext::oneapi::experimental::printf("NTTKernel_1: Kernel Started...\n"); // Original commentary preserved
+            
             // Local array to store data read from pipe before processing
-            uint32_t local_data[4096]; // Adjust size if n can be larger
+            uint32_t local_data[PIPE_CAPACITY]; // MODIFIED: Was 4096, now PIPE_CAPACITY
 
-            sycl::ext::oneapi::experimental::printf("NTTKernel_1: Input Pipe Read Loop...\n");
+            sycl::ext::oneapi::experimental::printf("NTTKernel_1: Input Pipe Read Loop...\n"); // Original commentary preserved
             // Read data from the input pipe
-            for(size_t i = 0; i < kernel_n; ++i) {
-                sycl::ext::oneapi::experimental::printf("NTTKernel_1: Reading Input Pipe...\n");
-                local_data[i] = ScaleReduceToNTT1Pipe::read();
-                // Debug message for first and last iterations
-                if (i == 0 || i == kernel_n - 1) {
-                    sycl::ext::oneapi::experimental::printf("NTTKernel_1: Read value %u from input pipe at index %zu\n", local_data[i], i);
+            // non-blocking while-loop
+            size_t items_read = 0;
+            while (items_read < kernel_n) {
+                //sycl::ext::oneapi::experimental::printf("NTTKernel_1: Reading Input Pipe...\n");
+                bool read_success = false; // Added for non-blocking read
+                uint32_t pipe_val = ScaleReduceToNTT1Pipe::read(read_success); // Added for non-blocking read
+                if (read_success) { // Added for non-blocking read
+                    if (items_read < PIPE_CAPACITY) { // Check against local_data actual size
+                        local_data[items_read] = pipe_val;
+                    }
+                    // Debug message for first and last iterations
+                    if (items_read == 0 || items_read == kernel_n - 1) {
+                        sycl::ext::oneapi::experimental::printf("NTTKernel_1: Read value %u from input pipe at index %zu\n", local_data[items_read], items_read);
+                    }
+                    items_read++;
                 }
             }
-            */
-
+            
             // Calculate the NTT root directly in the device kernel
             uint32_t kernel_root;
             
@@ -97,6 +107,10 @@ public:
                 kernel_root = 1; // Default fallback
             }
             */
+            else {
+                kernel_root = 1; // Default fallback
+            }
+            
             size_t hsize = 1;
             size_t tt = kernel_n / 2;
             
@@ -109,16 +123,17 @@ public:
                     
                     if (power == 0) {
                         s = 1;
-                    } else if (power == (1 << (kernel_logn - 1))) {
+                    } else if (power == (1u << (kernel_logn - 1))) {
                         s = kernel_root;
                     } else {
                         // Inline exponentiation: calculate s = root^power mod mod_val
                         uint32_t current_power = kernel_root;
                         uint32_t result = 1;
                         size_t shift_count = kernel_logn - 1;
-                        
+                        uint32_t temp_power_loop_var = power; // Using a temp var to modify 'power' for the loop only
+
                         while (true) {
-                            if (power & ((uint32_t)1 << shift_count)) {
+                            if (temp_power_loop_var & ((uint32_t)1 << shift_count)) {
                                 // Equivalent to mul_mod(current_power, result, mod)
                                 uint32_t product[2];
                                 
@@ -128,217 +143,162 @@ public:
                                 product[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
                                 
                                 // Equivalent to barrett_reduce_wide(product, mod)
-                                // Which calls barrett_reduce_64input_32modulus(product, mod)
-                                
-                                // Round 1
                                 uint32_t right_hw;
                                 {
                                     uint32_t res[2];
-                                    uint64_t res_temp = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[0];
-                                    res[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                                    res[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
+                                    uint64_t res_temp_br = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[0];
+                                    res[0] = (uint32_t)(res_temp_br & 0xFFFFFFFF);
+                                    res[1] = (uint32_t)((res_temp_br >> 32) & 0xFFFFFFFF);
                                     right_hw = res[1];
                                 }
-
                                 uint32_t middle_temp[2];
                                 {
-                                    uint64_t res_temp = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[1];
-                                    middle_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                                    middle_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
+                                    uint64_t res_temp_br = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[1];
+                                    middle_temp[0] = (uint32_t)(res_temp_br & 0xFFFFFFFF);
+                                    middle_temp[1] = (uint32_t)((res_temp_br >> 32) & 0xFFFFFFFF);
                                 }
-                                
                                 uint32_t middle_lw;
                                 uint32_t middle_lw_carry;
                                 {
                                     middle_lw = right_hw + middle_temp[0];
                                     middle_lw_carry = (uint8_t)(middle_lw < right_hw);
                                 }
-                                
                                 uint32_t middle_hw = middle_temp[1] + middle_lw_carry;
-
-                                // Round 2
                                 uint32_t middle2_temp[2];
                                 {
-                                    uint64_t res_temp = (uint64_t)product[1] * (uint64_t)kernel_const_ratio[0];
-                                    middle2_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                                    middle2_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
+                                    uint64_t res_temp_br = (uint64_t)product[1] * (uint64_t)kernel_const_ratio[0];
+                                    middle2_temp[0] = (uint32_t)(res_temp_br & 0xFFFFFFFF);
+                                    middle2_temp[1] = (uint32_t)((res_temp_br >> 32) & 0xFFFFFFFF);
                                 }
-                                
                                 uint32_t middle2_lw;
                                 uint32_t middle2_lw_carry;
                                 {
                                     middle2_lw = middle_lw + middle2_temp[0];
                                     middle2_lw_carry = (uint8_t)(middle2_lw < middle_lw);
                                 }
-                                
                                 uint32_t middle2_hw = middle2_temp[1] + middle2_lw_carry;
-
                                 uint32_t tmp = product[1] * kernel_const_ratio[1] + middle_hw + middle2_hw;
-
-                                // Barrett subtraction
                                 tmp = product[0] - tmp * kernel_mod_val;
-                                
-                                // Equivalent to shift_result
                                 int32_t is_2q = (int32_t)(tmp >= kernel_mod_val);
                                 uint32_t mask = (uint32_t)(-is_2q);
                                 result = (uint32_t)(tmp) - (kernel_mod_val & mask);
                             }
                             
-                            power &= ~((uint32_t)1 << shift_count);
-                            if (power == 0) {
+                            temp_power_loop_var &= ~((uint32_t)1 << shift_count);
+                            if (temp_power_loop_var == 0) {
                                 s = result;
                                 break;
                             }
                             
-                            // Equivalent to mul_mod(current_power, current_power, mod)
-                            uint32_t product[2];
-                            
-                            // Equivalent to mul_uint_wide(current_power, current_power, product)
+                            uint32_t product[2]; 
                             uint64_t res_temp = (uint64_t)current_power * (uint64_t)current_power;
                             product[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
                             product[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
                             
-                            // Equivalent to barrett_reduce_wide(product, mod)
-                            // Which calls barrett_reduce_64input_32modulus(product, mod)
-                            
-                            // Round 1
-                            uint32_t right_hw;
+                            uint32_t right_hw; 
                             {
                                 uint32_t res[2];
-                                uint64_t res_temp = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[0];
-                                res[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                                res[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
+                                uint64_t res_temp_br = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[0];
+                                res[0] = (uint32_t)(res_temp_br & 0xFFFFFFFF);
+                                res[1] = (uint32_t)((res_temp_br >> 32) & 0xFFFFFFFF);
                                 right_hw = res[1];
                             }
-
-                            uint32_t middle_temp[2];
+                            uint32_t middle_temp[2]; 
                             {
-                                uint64_t res_temp = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[1];
-                                middle_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                                middle_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
+                                uint64_t res_temp_br = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[1];
+                                middle_temp[0] = (uint32_t)(res_temp_br & 0xFFFFFFFF);
+                                middle_temp[1] = (uint32_t)((res_temp_br >> 32) & 0xFFFFFFFF);
                             }
-                            
-                            uint32_t middle_lw;
-                            uint32_t middle_lw_carry;
+                            uint32_t middle_lw; 
+                            uint32_t middle_lw_carry; 
                             {
                                 middle_lw = right_hw + middle_temp[0];
                                 middle_lw_carry = (uint8_t)(middle_lw < right_hw);
                             }
-                            
-                            uint32_t middle_hw = middle_temp[1] + middle_lw_carry;
-
-                            // Round 2
-                            uint32_t middle2_temp[2];
+                            uint32_t middle_hw = middle_temp[1] + middle_lw_carry; 
+                            uint32_t middle2_temp[2]; 
                             {
-                                uint64_t res_temp = (uint64_t)product[1] * (uint64_t)kernel_const_ratio[0];
-                                middle2_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                                middle2_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
+                                uint64_t res_temp_br = (uint64_t)product[1] * (uint64_t)kernel_const_ratio[0];
+                                middle2_temp[0] = (uint32_t)(res_temp_br & 0xFFFFFFFF);
+                                middle2_temp[1] = (uint32_t)((res_temp_br >> 32) & 0xFFFFFFFF);
                             }
-                            
-                            uint32_t middle2_lw;
-                            uint32_t middle2_lw_carry;
+                            uint32_t middle2_lw; 
+                            uint32_t middle2_lw_carry; 
                             {
                                 middle2_lw = middle_lw + middle2_temp[0];
                                 middle2_lw_carry = (uint8_t)(middle2_lw < middle_lw);
                             }
-                            
-                            uint32_t middle2_hw = middle2_temp[1] + middle2_lw_carry;
-
+                            uint32_t middle2_hw = middle2_temp[1] + middle2_lw_carry; 
                             uint32_t tmp = product[1] * kernel_const_ratio[1] + middle_hw + middle2_hw;
-
-                            // Barrett subtraction
                             tmp = product[0] - tmp * kernel_mod_val;
-                            
-                            // Equivalent to shift_result
                             int32_t is_2q = (int32_t)(tmp >= kernel_mod_val);
                             uint32_t mask = (uint32_t)(-is_2q);
                             current_power = (uint32_t)(tmp) - (kernel_mod_val & mask);
                             
-                            shift_count--;
-                        }
-                    }
+                            if (shift_count > 0) {
+                                shift_count--;
+                            } else if (temp_power_loop_var != 0) {
+                                s = result; 
+                                break; 
+                            }
+                        } // End of while(true) for exponentiation
+                    } // End of 's' calculation
                     
-                    // Process each pair in the current group
                     for (size_t k = kstart; k < (kstart + tt); k++) {
-                        uint32_t u = data[k]; // ORIGINAL
-                        //uint32_t u = local_data[k];
+                        uint32_t u = local_data[k];
                         
-                        // Equivalent to mul_mod(data[k + tt], s, mod)
                         uint32_t v;
                         {
                             uint32_t product[2];
-                            
-                            // Equivalent to mul_uint_wide(data[k + tt], s, product)
-                            uint64_t res_temp = (uint64_t)data[k + tt] * (uint64_t)s; // ORIGINAL
-                            //uint64_t res_temp = (uint64_t)local_data[k + tt] * (uint64_t)s;
+                            uint64_t res_temp = (uint64_t)local_data[k + tt] * (uint64_t)s;
                             product[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
                             product[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
                             
-                            // Equivalent to barrett_reduce_wide(product, mod)
-                            // Which calls barrett_reduce_64input_32modulus(product, mod)
-                            
-                            // Round 1
                             uint32_t right_hw;
                             {
                                 uint32_t res[2];
-                                uint64_t res_temp = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[0];
-                                res[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                                res[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
+                                uint64_t res_temp_br = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[0];
+                                res[0] = (uint32_t)(res_temp_br & 0xFFFFFFFF);
+                                res[1] = (uint32_t)((res_temp_br >> 32) & 0xFFFFFFFF);
                                 right_hw = res[1];
                             }
-
                             uint32_t middle_temp[2];
                             {
-                                uint64_t res_temp = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[1];
-                                middle_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                                middle_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
+                                uint64_t res_temp_br = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[1];
+                                middle_temp[0] = (uint32_t)(res_temp_br & 0xFFFFFFFF);
+                                middle_temp[1] = (uint32_t)((res_temp_br >> 32) & 0xFFFFFFFF);
                             }
-                            
                             uint32_t middle_lw;
                             uint32_t middle_lw_carry;
                             {
                                 middle_lw = right_hw + middle_temp[0];
                                 middle_lw_carry = (uint8_t)(middle_lw < right_hw);
                             }
-                            
                             uint32_t middle_hw = middle_temp[1] + middle_lw_carry;
-
-                            // Round 2
                             uint32_t middle2_temp[2];
                             {
-                                uint64_t res_temp = (uint64_t)product[1] * (uint64_t)kernel_const_ratio[0];
-                                middle2_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                                middle2_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
+                                uint64_t res_temp_br = (uint64_t)product[1] * (uint64_t)kernel_const_ratio[0];
+                                middle2_temp[0] = (uint32_t)(res_temp_br & 0xFFFFFFFF);
+                                middle2_temp[1] = (uint32_t)((res_temp_br >> 32) & 0xFFFFFFFF);
                             }
-                            
                             uint32_t middle2_lw;
                             uint32_t middle2_lw_carry;
                             {
                                 middle2_lw = middle_lw + middle2_temp[0];
                                 middle2_lw_carry = (uint8_t)(middle2_lw < middle_lw);
                             }
-                            
                             uint32_t middle2_hw = middle2_temp[1] + middle2_lw_carry;
-
                             uint32_t tmp = product[1] * kernel_const_ratio[1] + middle_hw + middle2_hw;
-
-                            // Barrett subtraction
                             tmp = product[0] - tmp * kernel_mod_val;
-                            
-                            // Equivalent to shift_result
                             int32_t is_2q = (int32_t)(tmp >= kernel_mod_val);
                             uint32_t mask = (uint32_t)(-is_2q);
                             v = (uint32_t)(tmp) - (kernel_mod_val & mask);
                         }
                         
-                        // Equivalent to add_mod(u, v, mod)
                         uint32_t result_add = u + v;
                         if (result_add >= kernel_mod_val) result_add -= kernel_mod_val;
-                        data[k] = result_add; // ORIGINAL
-                        //local_data[k] = result_add;
+                        local_data[k] = result_add;
                         
-                        // Equivalent to sub_mod(u, v, mod)
-                        // First, equivalent to neg_mod(v, mod)
                         uint32_t negated;
                         {
                             int32_t non_zero = (int32_t)(v != 0);
@@ -346,21 +306,26 @@ public:
                             negated = (kernel_mod_val - v) & mask;
                         }
                         
-                        // Then, equivalent to add_mod(u, negated, mod)
                         uint32_t result_sub = u + negated;
                         if (result_sub >= kernel_mod_val) result_sub -= kernel_mod_val;
-                        data[k + tt] = result_sub; // ORIGINAL
-                        //local_data[k + tt] = result_sub;
+                        local_data[k + tt] = result_sub;
                     }
                 }
             }
-            /*
+            // --- End of NTT Computation ---
+
             // Write the final NTT result from local_data to the output buffer
-            for(size_t i = 0; i < kernel_n; ++i) {
-                data[i] = local_data[i];
+            sycl::ext::oneapi::experimental::printf("NTTKernel_1: Finished processing and wrote to output buffer.\n");
+            for(size_t i_out = 0; i_out < kernel_n; ++i_out) { // Original loop variable 'i' for output
+                if (i_out < PIPE_CAPACITY) { 
+                    out_data_accessor[i_out] = local_data[i_out];
+                }
+                // Original debug message
+                if (i_out == 0 || i_out == kernel_n - 1) {
+                   sycl::ext::oneapi::experimental::printf("NTTKernel_1: Wrote value %u to output buffer from index %zu\n", local_data[i_out], i_out);
+                }
             }
             sycl::ext::oneapi::experimental::printf("NTTKernel_1: Finished processing and wrote to output buffer.\n");
-            */
         });
     }
 };

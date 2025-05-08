@@ -147,18 +147,18 @@ extern "C" void SYCL_combined_encrypt(
 
 // Integrated pipeline function with modified NTTKernel_2 call
 void pipeline(
-    queue q,                                        // The SYCL queue for submitting kernels.
-    size_t n,                                       // The polynomial degree.
-    size_t logn,                                    // Base-2 logarithm of the polynomial degree.
-    double scale,                                   // The CKKS scaling factor.
-    uint32_t mod_value,                             // The current modulus prime (q).
-    const uint32_t* const_ratio,                    // Precomputed constant ratio for Barrett reduction modulo q.
+    queue q,                                      // The SYCL queue for submitting kernels.
+    size_t n,                                     // The polynomial degree.
+    size_t logn,                                  // Base-2 logarithm of the polynomial degree.
+    double scale,                                 // The CKKS scaling factor.
+    uint32_t mod_value,                           // The current modulus prime (q).
+    const uint32_t* const_ratio,                  // Precomputed constant ratio for Barrett reduction modulo q.
     buffer<std::complex<double>, 1>& encoding_buf,  // Input buffer: Complex-encoded plaintext values.
-    buffer<int8_t, 1>& error_samples_buf,           // Input buffer: Noise/error samples.
-    buffer<uint32_t, 1>& ntt_pte_buf,               // Intermediate buffer: Output of ScaleReduce, Input/Output of NTT1. Holds NTT(plaintext + error).
-    buffer<uint32_t, 1>& c0_s_buf,                  // Main work buffer: Input is expanded_s, intermediate results include NTT(s) and -(NTT(s)*c1), final output is ciphertext component c0.
-    buffer<uint32_t, 1>& c1_buf,                    // Input buffer: Uniform polynomial 'a' (ciphertext component c1). Read by PolyMultNeg.
-    buffer<uint32_t, 1>& s_save_buf                 // Output buffer: Destination for saving the NTT(s) state from NTTKernel_2 if requested.
+    buffer<int8_t, 1>& error_samples_buf,         // Input buffer: Noise/error samples.
+    buffer<uint32_t, 1>& ntt_pte_buf,             // MODIFIED ROLE: Now primarily the OUTPUT buffer for NTTKernel_1. Holds NTT(plaintext + error).
+    buffer<uint32_t, 1>& c0_s_buf,                // Main work buffer: Input is expanded_s, intermediate results include NTT(s) and -(NTT(s)*c1), final output is ciphertext component c0.
+    buffer<uint32_t, 1>& c1_buf,                  // Input buffer: Uniform polynomial 'a' (ciphertext component c1). Read by PolyMultNeg.
+    buffer<uint32_t, 1>& s_save_buf               // Output buffer: Destination for saving the NTT(s) state from NTTKernel_2 if requested.
 ) {
     std::cout << "[Pipeline] Starting Full Integration (NTT2 Dual Output)..." << std::endl;
     try {
@@ -166,37 +166,34 @@ void pipeline(
         // --- Kernels that can start immediately ---
 
         // Submit IFFTKernel
+        // IFFTKernel outputs to IFFTToScaleAndReducePipe and IFFTErrorToScaleAndReducePipe
         sycl::event ifft_event = q.submit([&](handler &h) {
-            // Assuming IFFTKernel call logic was here
             IFFTKernel(n, logn, encoding_buf, error_samples_buf)(h);
         });
-        std::cout << "[Pipeline] Submitted IFFTKernel." << std::endl; // Print moved after submit for clarity
+        std::cout << "[Pipeline] Submitted IFFTKernel." << std::endl;
 
-        // Submit MODIFIED NTTKernel_2 (Operates on c0_s_buf AND writes to s_save_buf)
+        // Submit NTTKernel_2 (Operates on c0_s_buf AND writes to s_save_buf)
         std::cout << "[Pipeline] Submitting NTTKernel_2 (Dual Output)..." << std::endl;
         sycl::event ntt2_event = q.submit([&](handler &h) {
-            // Pass both primary buffer and save buffer
             NTTKernel_2(n, logn, mod_value, const_ratio, c0_s_buf, s_save_buf)(h);
         });
         std::cout << "[Pipeline] Submitted NTTKernel_2." << std::endl;
 
-        // --- Kernels dependent on IFFT ---
-        std::cout << "[Pipeline] Submitting ScaleAndReduceKernel..." << std::endl; // Print moved before submit
+        // ScaleAndReduceKernel reads from IFFT pipes and writes to ScaleReduceToNTT1Pipe
+        std::cout << "[Pipeline] Submitting ScaleAndReduceKernel..." << std::endl;
         sycl::event scale_reduce_event = q.submit([&](handler &h) {
-             h.depends_on(ifft_event);
-             // Assuming ScaleAndReduceKernel call logic was here
-             ScaleAndReduceKernel(n, scale, mod_value, const_ratio, ntt_pte_buf)(h);
+            //h.depends_on(ifft_event);
+            ScaleAndReduceKernel(n, scale, mod_value, const_ratio)(h);
         });
-        std::cout << "[Pipeline] Submitted ScaleAndReduceKernel." << std::endl; // Print moved after submit
+        std::cout << "[Pipeline] Submitted ScaleAndReduceKernel." << std::endl;
 
-        // --- Kernels dependent on ScaleAndReduce ---
-        std::cout << "[Pipeline] Submitting NTTKernel_1..." << std::endl; // Print moved before submit
+        // NTTKernel_1 reads from ScaleReduceToNTT1Pipe and writes its result to ntt_pte_buf.
+        std::cout << "[Pipeline] Submitting NTTKernel_1..." << std::endl;
         sycl::event ntt1_event = q.submit([&](handler &h) {
-             h.depends_on(scale_reduce_event);
-             // Assuming NTTKernel_1 call logic was here
-             NTTKernel_1(n, logn, mod_value, const_ratio, ntt_pte_buf)(h);
+            //h.depends_on(scale_reduce_event);
+            NTTKernel_1(n, logn, mod_value, const_ratio, ntt_pte_buf)(h);
         });
-        std::cout << "[Pipeline] Submitted NTTKernel_1." << std::endl; // Print moved after submit
+        std::cout << "[Pipeline] Submitted NTTKernel_1." << std::endl;
 
         // Submit PolyMultNegNTTKernel
         // Depends on NTT2 completing its write to c0_s_buf
@@ -208,9 +205,10 @@ void pipeline(
         std::cout << "[Pipeline] Submitted PolyMultNegNTTKernel." << std::endl;
 
         // --- Final Kernel dependent on NTT1 and MultNeg ---
+        // PolyAddModKernel reads from c0_s_buf and ntt_pte_buf.
+        // ntt_pte_buf is now populated by NTTKernel_1.
         std::cout << "[Pipeline] Submitting PolyAddModKernel..." << std::endl;
         sycl::event add_event = q.submit([&](handler &h) {
-            // Depends on NTT1 and MultNeg completing
             h.depends_on({ntt1_event, mult_neg_event});
             PolyAddModKernel(n, mod_value, c0_s_buf, ntt_pte_buf)(h);
         });
@@ -221,11 +219,18 @@ void pipeline(
 
         std::cout << "[Pipeline] Full pipeline execution completed." << std::endl;
 
-    } catch (exception const &e) {
-         std::cout << "[Pipeline] EXCEPTION CAUGHT!" << std::endl; // Indented catch block
-         std::cerr << "Caught a synchronous SYCL exception in pipeline: "
-                   << e.what() << std::endl;
-         std::exit(1); // Consider if exit is appropriate or if error should propagate
+    } catch (sycl::exception const &e) { // Changed to sycl::exception for SYCL specific exceptions
+        std::cout << "[Pipeline] EXCEPTION CAUGHT!" << std::endl;
+        std::cerr << "Caught a SYCL exception in pipeline: "
+                  << e.what() << std::endl;
+        // Consider rethrowing or handling more gracefully depending on application structure
+        // For now, exiting as in original:
+        std::exit(1); 
+    } catch (std::exception const &e) { // Catch other standard exceptions
+        std::cout << "[Pipeline] STANDARD EXCEPTION CAUGHT!" << std::endl;
+        std::cerr << "Caught a standard exception in pipeline: "
+                  << e.what() << std::endl;
+        std::exit(1);
     }
     std::cout << "[Pipeline] Exiting." << std::endl;
 }
