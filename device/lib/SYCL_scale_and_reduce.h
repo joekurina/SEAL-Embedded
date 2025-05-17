@@ -13,23 +13,17 @@ private:
     double scale;
     uint32_t mod_value;
     const uint32_t* const_ratio;
-    // mutable sycl::buffer<uint32_t, 1> out_acc; // REMOVED: Output buffer
 
 public:
     // Constructor takes combined arguments
     ScaleAndReduceKernel(size_t n_val, double scale_val, uint32_t mod_val,
-                         const uint32_t* const_ratio_val /*,
-                         sycl::buffer<uint32_t, 1>& out_buf REMOVED */ )
+                         const uint32_t* const_ratio_val)
         : n(n_val),
           scale(scale_val),
           mod_value(mod_val),
-          const_ratio(const_ratio_val) /*,
-          out_acc(out_buf) REMOVED */ {}
+          const_ratio(const_ratio_val) {}
 
     void operator()(sycl::handler& h) const {
-        // Get access to the output buffer
-        // auto out = out_acc.get_access<sycl::access::mode::write>(h); // REMOVED
-
         // Capture necessary variables for the kernel lambda
         size_t kernel_n = n; 
         double kernel_scale = scale;
@@ -66,11 +60,14 @@ public:
                     local_error_data[items_read_and_stored] = current_error_value;
                 }
                 // Debug message for first and last iterations
+                /*
                 if (items_read_and_stored == 0 || items_read_and_stored == kernel_n - 1) {
                     sycl::ext::oneapi::experimental::printf(
-                        "ScaleAndReduceKernel: Read encoded value %f and error %d at index %zu\n",
-                        current_encoded_value.real(), current_error_value, items_read_and_stored);
+                        "ScaleAndReduceKernel: Reading from pipes, index %zu, encoded value = %f\n", items_read_and_stored, current_encoded_value.real());
+                    sycl::ext::oneapi::experimental::printf(
+                        "ScaleAndReduceKernel: Reading from pipes, index %zu, error sample = %d\n", items_read_and_stored, current_error_value);
                 }
+                */
                 items_read_and_stored++;
             } // End of while (items_read_and_stored < kernel_n)
 
@@ -139,20 +136,23 @@ public:
 
                 uint32_t final_result = ((kernel_mod_val - coeff_crt) & (-mask)) + (coeff_crt & (mask - 1));
 
-                // out[i] = final_result; // Writing to buffer
-                ScaleReduceToNTT1Pipe::write(final_result); 
+                ScaleReduceToNTTBPipe::write(final_result); 
                 
+                // Debug message for first and last iterations
+                /*
                 if (i == 0 || i == kernel_n -1) {
-                     sycl::ext::oneapi::experimental::printf(
-                         "ScaleAndReduceKernel: Loop i=%zu, input encoded_real=%f, error=%d, wrote result %u to ScaleReduceToNTT1Pipe.\n",
-                         i, encoded_value.real(), error_value, final_result);
+                    sycl::ext::oneapi::experimental::printf(
+                        "ScaleAndReduceKernel: Writing to Pipe, index %zu, Reduced PTE Value = %u\n", i, final_result);
                 }
+                */
             } // End of for loop
 
+            /*
             sycl::ext::oneapi::experimental::printf(
                 "ScaleAndReduceKernel: Loop finished after %zu iterations.\n", kernel_n);
             sycl::ext::oneapi::experimental::printf(
                 "ScaleAndReduceKernel: Finished.\n");
+            */
         }); // End single_task
     } // End operator()
 }; // End of ScaleAndReduceKernel class

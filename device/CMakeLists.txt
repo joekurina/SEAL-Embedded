@@ -19,7 +19,7 @@ set(BASE_CXX_FLAGS "-fsycl -std=c++17 -Rno-debug-disables-optimization")
 set(REPORT_COMPILE_FLAGS "-fintelfpga")
 set(REPORT_LINK_FLAGS "-Xshardware -Xstarget=${FPGA_DEVICE} -fsycl-link=early")
 
-set(EMULATOR_COMPILE_FLAGS "-DFPGA_EMULATOR")
+set(EMULATOR_COMPILE_FLAGS "-fintelfpga -DFPGA_EMULATOR")
 
 project(SEAL_EMBEDDED VERSION 1.1.0 LANGUAGES C CXX ASM)
 

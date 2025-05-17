@@ -5,7 +5,7 @@
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
 // Define pipes for communication between IFFT and ScaleAndConvert kernels
-constexpr size_t PIPE_CAPACITY = 4096; // Adjust based on your needs 4096
+constexpr size_t PIPE_CAPACITY = 4096; // Adjust based on your needs
 
 // Pipe from IFFT to ScaleAndConvert kernel for transformed values
 using IFFTToScaleAndReducePipe = 
@@ -15,6 +15,10 @@ using IFFTToScaleAndReducePipe =
 using IFFTErrorToScaleAndReducePipe =
     sycl::ext::intel::pipe<class IFFTErrorToScaleAndReducePipeID, int8_t, PIPE_CAPACITY>;
 
-// Pipe from ScaleAndReduceKernel to NTTKernel_1
-using ScaleReduceToNTT1Pipe =
-    sycl::ext::intel::pipe<class ScaleReduceToNTT1PipeID, uint32_t, PIPE_CAPACITY>;
+// Pipe from ScaleAndConvertKernel to ReduceSetPTEKernel for plaintext+error values
+using ScaleToReducePipe =
+    sycl::ext::intel::pipe<class ScaleToReducePipeID, int64_t, PIPE_CAPACITY>;
+
+// Pipe from ScaleAndConvertKernel to NTTKernel_1 for plaintext+error values
+using ScaleReduceToNTTBPipe =
+    sycl::ext::intel::pipe<class ScaleReduceToNTTBPipeID, uint32_t, PIPE_CAPACITY>;

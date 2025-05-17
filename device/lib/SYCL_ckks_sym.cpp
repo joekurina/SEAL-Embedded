@@ -7,7 +7,8 @@
 
 // Include the SYCL kernel headers
 #include "SYCL_ifft.h"
-#include "SYCL_ntt.h"
+#include "SYCL_ntt_a.h"
+#include "SYCL_ntt_b.h"
 #include "SYCL_poly_mult_neg.h"
 #include "SYCL_poly_add.h"
 #include "SYCL_scale_and_reduce.h"
@@ -19,11 +20,12 @@ using namespace sycl;
 
 // Forward declare kernel names
 class IFFTKernel;
-class NTTKernel_1;
-class NTTKernel_2;
+class NTTKernel_A;
+class NTTKernel_B;
 class PolyMultNegNTTKernel;
 class PolyAddModKernel;
 class ScaleAndReduceKernel;
+
 
 // Forward declare pipeline function
 void pipeline(
@@ -160,7 +162,7 @@ void pipeline(
     buffer<uint32_t, 1>& c1_buf,                  // Input buffer: Uniform polynomial 'a' (ciphertext component c1). Read by PolyMultNeg.
     buffer<uint32_t, 1>& s_save_buf               // Output buffer: Destination for saving the NTT(s) state from NTTKernel_2 if requested.
 ) {
-    std::cout << "[Pipeline] Starting Full Integration (NTT2 Dual Output)..." << std::endl;
+    //std::cout << "[Pipeline] Starting Full Integration (NTT2 Dual Output)..." << std::endl;
     try {
 
         // --- Kernels that can start immediately ---
@@ -170,67 +172,61 @@ void pipeline(
         sycl::event ifft_event = q.submit([&](handler &h) {
             IFFTKernel(n, logn, encoding_buf, error_samples_buf)(h);
         });
-        std::cout << "[Pipeline] Submitted IFFTKernel." << std::endl;
+        //std::cout << "[Pipeline] Submitted IFFTKernel." << std::endl;
 
         // Submit NTTKernel_2 (Operates on c0_s_buf AND writes to s_save_buf)
-        std::cout << "[Pipeline] Submitting NTTKernel_2 (Dual Output)..." << std::endl;
-        sycl::event ntt2_event = q.submit([&](handler &h) {
-            NTTKernel_2(n, logn, mod_value, const_ratio, c0_s_buf, s_save_buf)(h);
+        //std::cout << "[Pipeline] Submitting NTTKernel_2 (Dual Output)..." << std::endl;
+        sycl::event nttA_event = q.submit([&](handler &h) {
+            NTTKernel_A(n, logn, mod_value, const_ratio, c0_s_buf, s_save_buf)(h);
         });
-        std::cout << "[Pipeline] Submitted NTTKernel_2." << std::endl;
+        //std::cout << "[Pipeline] Submitted NTTKernel_2." << std::endl;
 
         // ScaleAndReduceKernel reads from IFFT pipes and writes to ScaleReduceToNTT1Pipe
-        std::cout << "[Pipeline] Submitting ScaleAndReduceKernel..." << std::endl;
+        //std::cout << "[Pipeline] Submitting ScaleAndReduceKernel..." << std::endl;
         sycl::event scale_reduce_event = q.submit([&](handler &h) {
             //h.depends_on(ifft_event);
             ScaleAndReduceKernel(n, scale, mod_value, const_ratio)(h);
         });
-        std::cout << "[Pipeline] Submitted ScaleAndReduceKernel." << std::endl;
+        //std::cout << "[Pipeline] Submitted ScaleAndReduceKernel." << std::endl;
 
         // NTTKernel_1 reads from ScaleReduceToNTT1Pipe and writes its result to ntt_pte_buf.
-        std::cout << "[Pipeline] Submitting NTTKernel_1..." << std::endl;
-        sycl::event ntt1_event = q.submit([&](handler &h) {
+        //std::cout << "[Pipeline] Submitting NTTKernel_1..." << std::endl;
+        sycl::event nttB_event = q.submit([&](handler &h) {
             //h.depends_on(scale_reduce_event);
-            NTTKernel_1(n, logn, mod_value, const_ratio, ntt_pte_buf)(h);
+            NTTKernel_B(n, logn, mod_value, const_ratio, ntt_pte_buf)(h);
+            //DummyKernel(n, ntt_pte_buf)(h); // Launch the dummy kernel instead of NTTKernel_1
         });
-        std::cout << "[Pipeline] Submitted NTTKernel_1." << std::endl;
+        //std::cout << "[Pipeline] Submitted NTTKernel_1." << std::endl;
 
         // Submit PolyMultNegNTTKernel
         // Depends on NTT2 completing its write to c0_s_buf
-        std::cout << "[Pipeline] Submitting PolyMultNegNTTKernel..." << std::endl;
+        //std::cout << "[Pipeline] Submitting PolyMultNegNTTKernel..." << std::endl;
         sycl::event mult_neg_event = q.submit([&](handler &h) {
-            h.depends_on(ntt2_event); // Depends on NTT2 completion
+            h.depends_on(nttA_event); // Depends on NTT2 completion
             PolyMultNegNTTKernel(n, mod_value, const_ratio, c0_s_buf, c1_buf)(h);
         });
-        std::cout << "[Pipeline] Submitted PolyMultNegNTTKernel." << std::endl;
+        //std::cout << "[Pipeline] Submitted PolyMultNegNTTKernel." << std::endl;
 
         // --- Final Kernel dependent on NTT1 and MultNeg ---
         // PolyAddModKernel reads from c0_s_buf and ntt_pte_buf.
         // ntt_pte_buf is now populated by NTTKernel_1.
-        std::cout << "[Pipeline] Submitting PolyAddModKernel..." << std::endl;
+        //std::cout << "[Pipeline] Submitting PolyAddModKernel..." << std::endl;
         sycl::event add_event = q.submit([&](handler &h) {
-            h.depends_on({ntt1_event, mult_neg_event});
+            h.depends_on({nttB_event, mult_neg_event});
             PolyAddModKernel(n, mod_value, c0_s_buf, ntt_pte_buf)(h);
         });
-        std::cout << "[Pipeline] Submitted PolyAddModKernel." << std::endl;
+        //std::cout << "[Pipeline] Submitted PolyAddModKernel." << std::endl;
 
         // Wait for the final PolyAddModKernel kernel to complete
         add_event.wait();
 
-        std::cout << "[Pipeline] Full pipeline execution completed." << std::endl;
+        //std::cout << "[Pipeline] Full pipeline execution completed." << std::endl;
 
-    } catch (sycl::exception const &e) { // Changed to sycl::exception for SYCL specific exceptions
-        std::cout << "[Pipeline] EXCEPTION CAUGHT!" << std::endl;
-        std::cerr << "Caught a SYCL exception in pipeline: "
-                  << e.what() << std::endl;
-        // Consider rethrowing or handling more gracefully depending on application structure
-        // For now, exiting as in original:
-        std::exit(1); 
     } catch (std::exception const &e) { // Catch other standard exceptions
         std::cout << "[Pipeline] STANDARD EXCEPTION CAUGHT!" << std::endl;
         std::cerr << "Caught a standard exception in pipeline: "
                   << e.what() << std::endl;
         std::exit(1);
     }
-    std::cout << "[Pipeline] Exiting." << std::endl;
+    //std::cout << "[Pipeline] Exiting." << std::endl;
 }
