@@ -32,19 +32,13 @@ public:
         size_t kernel_logn = logn;
         uint32_t kernel_mod_val = mod_value;
         const uint32_t* kernel_const_ratio = const_ratio;
-
-        //sycl::ext::oneapi::experimental::printf("NTTKernel_1: Starting kernel...\n"); 
         
-        h.single_task([=]() [[intel::kernel_args_restrict]] {
-            //sycl::ext::oneapi::experimental::printf("NTTKernel_1: Kernel Started...\n"); 
+        h.single_task([=]() [[intel::kernel_args_restrict]] { 
             // Local array to store data read from pipe before processing
             uint32_t local_data[PIPE_CAPACITY];
-
-            //sycl::ext::oneapi::experimental::printf("NTTKernel_1: Input Pipe Read Loop...\n"); 
             
-            size_t items_read = 0;
-            size_t loopcounter = 0;
             // Non-Blocking Pipe Read Loop
+            size_t items_read = 0;
             while (items_read < kernel_n) {
                 bool read_success = false;
                 uint32_t pipe_val = ScaleReduceToNTTBPipe::read(read_success); 
@@ -53,16 +47,8 @@ public:
                     if (items_read < kernel_n) { 
                         local_data[items_read] = pipe_val;
                     }
-                    // Debug message for first and last iterations
-                    /*
-                    if (items_read == 0 || items_read == kernel_n - 1) {
-                        sycl::ext::oneapi::experimental::printf(
-                            "NTTKernel_1: Reading from Pipe, index %zu, Value = %u\n", items_read, local_data[items_read]);
-                    }
-                    */
                     items_read++;
                 }
-                loopcounter++;
             }
             
             // Calculate the NTT root directly in the device kernel
@@ -318,19 +304,10 @@ public:
             }
             // --- End of NTT Computation ---
 
-            // Write the final NTT result from local_data to the output buffer
-            //sycl::ext::oneapi::experimental::printf("NTTKernel_1: Finished processing and wrote to output buffer.\n");
-            for(size_t i_out = 0; i_out < kernel_n; ++i_out) { // Original loop variable 'i' for output
-                if (i_out < PIPE_CAPACITY) { 
-                    out_data_accessor[i_out] = local_data[i_out];
-                }
-                /*
-                if (i_out == 0 || i_out == kernel_n - 1) {
-                   sycl::ext::oneapi::experimental::printf("NTTKernel_1: Wrote value %u to output buffer from index %zu\n", local_data[i_out], i_out);
-                }
-                */
+            for(size_t i_out = 0; i_out < kernel_n; ++i_out) 
+            {
+                out_data_accessor[i_out] = local_data[i_out];
             }
-            //sycl::ext::oneapi::experimental::printf("NTTKernel_1: Finished processing and wrote to output buffer.\n");
-        });
-    }
-};
+        }); // End of single_task
+    } // End of operator()
+}; // End of NTTKernel_B class
