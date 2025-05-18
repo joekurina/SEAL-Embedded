@@ -22,3 +22,7 @@ using ScaleToReducePipe =
 // Pipe from ScaleAndConvertKernel to NTTKernel_1 for plaintext+error values
 using ScaleReduceToNTTBPipe =
     sycl::ext::intel::pipe<class ScaleReduceToNTTBPipeID, uint32_t, PIPE_CAPACITY>;
+
+// Pipe from NTTKernel_B to AddModKernel for NTT(PTE+error)
+using NTTToAddModPipe =
+    sycl::ext::intel::pipe<class NTTToAddModPipeID, uint32_t, PIPE_CAPACITY>;

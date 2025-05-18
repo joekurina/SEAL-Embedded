@@ -13,14 +13,15 @@ private:
     size_t n;
     size_t logn;
     uint32_t mod_value;
+    uint32_t root;
     const uint32_t* const_ratio;
     mutable sycl::buffer<uint32_t, 1> result_out_acc; 
 
 public:
-    NTTKernel_B(size_t n_val, size_t logn_val, uint32_t mod_val, 
+    NTTKernel_B(size_t n_val, size_t logn_val, uint32_t mod_val, uint32_t root_val,
                 const uint32_t* const_ratio_val, 
                 sycl::buffer<uint32_t, 1>& result_output_buf) 
-        : n(n_val), logn(logn_val), mod_value(mod_val), 
+        : n(n_val), logn(logn_val), mod_value(mod_val), root(root_val),
             const_ratio(const_ratio_val), result_out_acc(result_output_buf) {} 
     
     void operator()(sycl::handler& h) const {
@@ -31,6 +32,7 @@ public:
         size_t kernel_n = n;
         size_t kernel_logn = logn;
         uint32_t kernel_mod_val = mod_value;
+        uint32_t kernel_root = root;
         const uint32_t* kernel_const_ratio = const_ratio;
         
         h.single_task([=]() [[intel::kernel_args_restrict]] { 
@@ -49,56 +51,6 @@ public:
                     }
                     items_read++;
                 }
-            }
-            
-            // Calculate the NTT root directly in the device kernel
-            uint32_t kernel_root;
-            
-            // Root selection based on polynomial degree and modulus
-            // Case for n = 4096
-            if (kernel_n == 4096) {
-                if (kernel_mod_val == 134012929) kernel_root = 7470;
-                else if (kernel_mod_val == 134111233) kernel_root = 3856;
-                else if (kernel_mod_val == 134176769) kernel_root = 24149;
-                else if (kernel_mod_val == 1053818881) kernel_root = 503422;
-                else if (kernel_mod_val == 1054015489) kernel_root = 16768;
-                else if (kernel_mod_val == 1054212097) kernel_root = 7305;
-                else kernel_root = 1; // Default fallback, invalid but prevents crashing
-            }
-            /*
-            // Case for n = 8192
-            else if (kernel_n == 8192) {
-                if (kernel_mod_val == 1053818881) kernel_root = 374229;
-                else if (kernel_mod_val == 1054015489) kernel_root = 123363;
-                else if (kernel_mod_val == 1054212097) kernel_root = 79941;
-                else if (kernel_mod_val == 1055260673) kernel_root = 38869;
-                else if (kernel_mod_val == 1056178177) kernel_root = 162146;
-                else if (kernel_mod_val == 1056440321) kernel_root = 81884;
-                else kernel_root = 1; // Default fallback
-            }
-            // Case for n = 16384
-            else if (kernel_n == 16384) {
-                if (kernel_mod_val == 1053818881) kernel_root = 13040;
-                else if (kernel_mod_val == 1054015489) kernel_root = 507;
-                else if (kernel_mod_val == 1054212097) kernel_root = 1595;
-                else if (kernel_mod_val == 1055260673) kernel_root = 68507;
-                else if (kernel_mod_val == 1056178177) kernel_root = 3073;
-                else if (kernel_mod_val == 1056440321) kernel_root = 6854;
-                else if (kernel_mod_val == 1058209793) kernel_root = 44467;
-                else if (kernel_mod_val == 1060175873) kernel_root = 16117;
-                else if (kernel_mod_val == 1060700161) kernel_root = 27607;
-                else if (kernel_mod_val == 1060765697) kernel_root = 222391;
-                else if (kernel_mod_val == 1061093377) kernel_root = 105471;
-                else if (kernel_mod_val == 1062469633) kernel_root = 310222;
-                else if (kernel_mod_val == 1062535169) kernel_root = 2005;
-                else kernel_root = 1; // Default fallback
-            }
-            else {
-                kernel_root = 1; // Default fallback
-            }
-            */
-            else {
-                kernel_root = 1; // Default fallback
             }
             
             size_t hsize = 1;
@@ -304,9 +256,10 @@ public:
             }
             // --- End of NTT Computation ---
 
-            for(size_t i_out = 0; i_out < kernel_n; ++i_out) 
+            for(size_t i = 0; i < kernel_n; ++i) 
             {
-                out_data_accessor[i_out] = local_data[i_out];
+                out_data_accessor[i] = local_data[i];
+                //NTTToAddModPipe::write(local_data[i]);
             }
         }); // End of single_task
     } // End of operator()

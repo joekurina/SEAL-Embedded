@@ -26,7 +26,6 @@ class PolyMultNegNTTKernel;
 class PolyAddModKernel;
 class ScaleAndReduceKernel;
 
-
 // Forward declare pipeline function
 void pipeline(
     queue q,
@@ -34,6 +33,7 @@ void pipeline(
     size_t logn,
     double scale,
     uint32_t mod_value,
+    uint32_t root,
     const uint32_t* const_ratio,
     buffer<std::complex<double>, 1>& encoding_buf,
     buffer<int8_t, 1>& error_samples_buf,
@@ -42,6 +42,8 @@ void pipeline(
     buffer<uint32_t, 1>& c1_buf,
     buffer<uint32_t, 1>& s_save_buf
 );
+// Forward declare NTT root calculation function
+uint32_t NTT_root(size_t n, uint32_t mod_val);
 
 // Implementation of the C-compatible function (Main host interface)
 extern "C" void SYCL_combined_encrypt(
@@ -71,6 +73,9 @@ extern "C" void SYCL_combined_encrypt(
     uint32_t* c1_save               // Output: Destination buffer for saving the original uniform polynomial 'a'. NULL if not needed.
 ) {
     
+    // Calculate the NTT root
+    uint32_t root = NTT_root(n, mod_value);
+
     // Copy the pre-generated uniform polynomial 'a' into the host memory buffer 'c1'.
     // This buffer 'c1' will be associated with a SYCL buffer and also represents
     // the second component of the final ciphertext (c1 = a).
@@ -135,6 +140,7 @@ extern "C" void SYCL_combined_encrypt(
         logn,
         scale,
         mod_value,
+        root,
         const_ratio,
         encoding_buf,
         error_samples_buf,
@@ -149,18 +155,19 @@ extern "C" void SYCL_combined_encrypt(
 
 // Integrated pipeline function with modified NTTKernel_2 call
 void pipeline(
-    queue q,                                      // The SYCL queue for submitting kernels.
-    size_t n,                                     // The polynomial degree.
-    size_t logn,                                  // Base-2 logarithm of the polynomial degree.
-    double scale,                                 // The CKKS scaling factor.
-    uint32_t mod_value,                           // The current modulus prime (q).
-    const uint32_t* const_ratio,                  // Precomputed constant ratio for Barrett reduction modulo q.
+    queue q,                                        // The SYCL queue for submitting kernels.
+    size_t n,                                       // The polynomial degree.
+    size_t logn,                                    // Base-2 logarithm of the polynomial degree.
+    double scale,                                   // The CKKS scaling factor.
+    uint32_t mod_value,                             // The modulus value (q).
+    uint32_t root,                                  // The NTT root for the polynomial ring.
+    const uint32_t* const_ratio,                    // Precomputed constant ratio for Barrett reduction modulo q.
     buffer<std::complex<double>, 1>& encoding_buf,  // Input buffer: Complex-encoded plaintext values.
-    buffer<int8_t, 1>& error_samples_buf,         // Input buffer: Noise/error samples.
-    buffer<uint32_t, 1>& ntt_pte_buf,             // MODIFIED ROLE: Now primarily the OUTPUT buffer for NTTKernel_1. Holds NTT(plaintext + error).
-    buffer<uint32_t, 1>& c0_s_buf,                // Main work buffer: Input is expanded_s, intermediate results include NTT(s) and -(NTT(s)*c1), final output is ciphertext component c0.
-    buffer<uint32_t, 1>& c1_buf,                  // Input buffer: Uniform polynomial 'a' (ciphertext component c1). Read by PolyMultNeg.
-    buffer<uint32_t, 1>& s_save_buf               // Output buffer: Destination for saving the NTT(s) state from NTTKernel_2 if requested.
+    buffer<int8_t, 1>& error_samples_buf,           // Input buffer: Noise/error samples.
+    buffer<uint32_t, 1>& ntt_pte_buf,               // MODIFIED ROLE: Now primarily the OUTPUT buffer for NTTKernel_1. Holds NTT(plaintext + error).
+    buffer<uint32_t, 1>& c0_s_buf,                  // Main work buffer: Input is expanded_s, intermediate results include NTT(s) and -(NTT(s)*c1), final output is ciphertext component c0.
+    buffer<uint32_t, 1>& c1_buf,                    // Input buffer: Uniform polynomial 'a' (ciphertext component c1). Read by PolyMultNeg.
+    buffer<uint32_t, 1>& s_save_buf                 // Output buffer: Destination for saving the NTT(s) state from NTTKernel_2 if requested.
 ) {
     //std::cout << "[Pipeline] Starting Full Integration (NTT2 Dual Output)..." << std::endl;
     try {
@@ -177,7 +184,7 @@ void pipeline(
         // Submit NTTKernel_2 (Operates on c0_s_buf AND writes to s_save_buf)
         //std::cout << "[Pipeline] Submitting NTTKernel_2 (Dual Output)..." << std::endl;
         sycl::event nttA_event = q.submit([&](handler &h) {
-            NTTKernel_A(n, logn, mod_value, const_ratio, c0_s_buf, s_save_buf)(h);
+            NTTKernel_A(n, logn, mod_value, root, const_ratio, c0_s_buf, s_save_buf)(h);
         });
         //std::cout << "[Pipeline] Submitted NTTKernel_2." << std::endl;
 
@@ -193,7 +200,7 @@ void pipeline(
         //std::cout << "[Pipeline] Submitting NTTKernel_1..." << std::endl;
         sycl::event nttB_event = q.submit([&](handler &h) {
             //h.depends_on(scale_reduce_event);
-            NTTKernel_B(n, logn, mod_value, const_ratio, ntt_pte_buf)(h);
+            NTTKernel_B(n, logn, mod_value, root, const_ratio, ntt_pte_buf)(h);
             //DummyKernel(n, ntt_pte_buf)(h); // Launch the dummy kernel instead of NTTKernel_1
         });
         //std::cout << "[Pipeline] Submitted NTTKernel_1." << std::endl;
@@ -229,4 +236,64 @@ void pipeline(
         std::exit(1);
     }
     //std::cout << "[Pipeline] Exiting." << std::endl;
-}
+} // End of pipeline function
+
+uint32_t NTT_root(std::size_t n, uint32_t mod_val)
+{
+    uint32_t root = 1;
+
+    switch (n)
+    {
+        case 4096:
+            switch (mod_val)
+            {
+                case 134012929u: root =  7470;  break;
+                case 134111233u: root =  3856;  break;
+                case 134176769u: root = 24149;  break;
+                case 1053818881u: root = 503422; break;
+                case 1054015489u: root = 16768;  break;
+                case 1054212097u: root =  7305;  break;
+                default:                        /* keep root = 1 */ ;
+            }
+            break;
+
+        case 8192:
+            switch (mod_val)
+            {
+                case 1053818881u: root = 374229; break;
+                case 1054015489u: root = 123363; break;
+                case 1054212097u: root =  79941; break;
+                case 1055260673u: root =  38869; break;
+                case 1056178177u: root = 162146; break;
+                case 1056440321u: root =  81884; break;
+                default:                        /* keep root = 1 */ ;
+            }
+            break;
+
+        case 16384:
+            switch (mod_val)
+            {
+                case 1053818881u: root =  13040;  break;
+                case 1054015489u: root =    507;  break;
+                case 1054212097u: root =   1595;  break;
+                case 1055260673u: root =  68507;  break;
+                case 1056178177u: root =   3073;  break;
+                case 1056440321u: root =   6854;  break;
+                case 1058209793u: root =  44467;  break;
+                case 1060175873u: root =  16117;  break;
+                case 1060700161u: root =  27607;  break;
+                case 1060765697u: root = 222391;  break;
+                case 1061093377u: root = 105471;  break;
+                case 1062469633u: root = 310222;  break;
+                case 1062535169u: root =   2005;  break;
+                default:                        /* keep root = 1 */ ;
+            }
+            break;
+
+        default:
+            /* keep root = 1 */
+            break;
+    }
+
+    return root;
+} // End of NTT_root function
