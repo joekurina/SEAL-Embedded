@@ -7,81 +7,52 @@
 #include <cstdint>
 
 // Merged Kernel: Performs Scaling/Conversion and Reduction
-class ScaleAndReduceKernel {
+class ScaleAndReduceKernel 
+{
 private:
     size_t n;
     double scale;
     uint32_t mod_value;
     const uint32_t* const_ratio;
+    mutable sycl::buffer<int8_t, 1> error_samples_acc;
 
 public:
     // Constructor takes combined arguments
     ScaleAndReduceKernel(size_t n_val, double scale_val, uint32_t mod_val,
-                         const uint32_t* const_ratio_val)
+                         const uint32_t* const_ratio_val,
+                         sycl::buffer<int8_t, 1>& error_samples_buf)
         : n(n_val),
           scale(scale_val),
           mod_value(mod_val),
-          const_ratio(const_ratio_val) {}
+          const_ratio(const_ratio_val), 
+          error_samples_acc(error_samples_buf) {}
 
-    void operator()(sycl::handler& h) const {
-        // Capture necessary variables for the kernel lambda
+    void operator()(sycl::handler& h) const 
+    {
+        // Get access to the error samples buffer
+        auto error_samples = error_samples_acc.get_access<sycl::access::mode::read>(h);
+
+        // Capture necessary variables
         size_t kernel_n = n; 
         double kernel_scale = scale;
         uint32_t kernel_mod_val = mod_value;
         const uint32_t* kernel_const_ratio = const_ratio;
 
-        h.single_task([=]() [[intel::kernel_args_restrict]] {
-            // --- Local arrays to buffer pipe data ---
+        h.single_task([=]() [[intel::kernel_args_restrict]] 
+        {
+            // --- Local array to buffer pipe data ---
             std::complex<double> local_encoded_data[PIPE_CAPACITY];
-            int8_t local_error_data[PIPE_CAPACITY];
-
-            // --- Pre-filling Phase: Using two sequential inner while loops for non-blocking reads ---
-            size_t items_read_and_stored = 0;
-            while (items_read_and_stored < kernel_n) { // Loop up to the runtime kernel_n
-                std::complex<double> current_encoded_value;
-                bool encoded_value_acquired = false;
-                
-                // Loop 1: non-blocking read for the encoded value
-                while (!encoded_value_acquired) {
-                    current_encoded_value = IFFTToScaleAndReducePipe::read(encoded_value_acquired);
-                }
-
-                int8_t current_error_value;
-                bool error_value_acquired = false;
-
-                // Loop 2: non-blocking read for the error value
-                while (!error_value_acquired) {
-                    current_error_value = IFFTErrorToScaleAndReducePipe::read(error_value_acquired);
-                }
-
-                // At this point, both current_encoded_value and current_error_value have been successfully read
-                if (items_read_and_stored < PIPE_CAPACITY) { 
-                    local_encoded_data[items_read_and_stored] = current_encoded_value;
-                    local_error_data[items_read_and_stored] = current_error_value;
-                }
-                // Debug message for first and last iterations
-                /*
-                if (items_read_and_stored == 0 || items_read_and_stored == kernel_n - 1) {
-                    sycl::ext::oneapi::experimental::printf(
-                        "ScaleAndReduceKernel: Reading from pipes, index %zu, encoded value = %f\n", items_read_and_stored, current_encoded_value.real());
-                    sycl::ext::oneapi::experimental::printf(
-                        "ScaleAndReduceKernel: Reading from pipes, index %zu, error sample = %d\n", items_read_and_stored, current_error_value);
-                }
-                */
-                items_read_and_stored++;
-            } // End of while (items_read_and_stored < kernel_n)
 
             // --- Processing Phase ---
             double n_inv = kernel_scale / static_cast<double>(kernel_n);
 
             for (size_t i = 0; i < kernel_n; i++) {
-                std::complex<double> encoded_value = local_encoded_data[i]; 
-                int8_t error_value = local_error_data[i];
+                std::complex<double> encoded_value = IFFTToScaleAndReducePipe::read(); 
 
                 double real_val = encoded_value.real();
                 double scaled = sycl::round(real_val * n_inv);
                 int64_t int_val = static_cast<int64_t>(scaled);
-                int64_t intermediate_result = int_val + error_value;
+                int64_t intermediate_result = int_val + error_samples[i];
 
                 int64_t val = intermediate_result;
                 uint64_t coeff_abs = (val < 0) ? static_cast<uint64_t>(-val) : static_cast<uint64_t>(val);
@@ -137,22 +108,7 @@ public:
                 uint32_t final_result = ((kernel_mod_val - coeff_crt) & (-mask)) + (coeff_crt & (mask - 1));
 
                 ScaleReduceToNTTBPipe::write(final_result); 
-                
-                // Debug message for first and last iterations
-                /*
-                if (i == 0 || i == kernel_n -1) {
-                    sycl::ext::oneapi::experimental::printf(
-                        "ScaleAndReduceKernel: Writing to Pipe, index %zu, Reduced PTE Value = %u\n", i, final_result);
-                }
-                */
             } // End of for loop
-
-            /*
-            sycl::ext::oneapi::experimental::printf(
-                "ScaleAndReduceKernel: Loop finished after %zu iterations.\n", kernel_n);
-            sycl::ext::oneapi::experimental::printf(
-                "ScaleAndReduceKernel: Finished.\n");
-            */
         }); // End single_task
     } // End operator()
 }; // End of ScaleAndReduceKernel class

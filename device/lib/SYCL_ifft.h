@@ -10,44 +10,25 @@ private:
     size_t n;
     size_t logn;
     mutable sycl::buffer<std::complex<double>, 1> encoding_acc;
-    mutable sycl::buffer<int8_t, 1> error_samples_acc;
 
 public:
-    IFFTKernel(size_t n_val, size_t logn_val,
-                sycl::buffer<std::complex<double>, 1>& encoding_buf,
-                sycl::buffer<int8_t, 1>& error_samples_buf)
+    IFFTKernel( size_t n_val, size_t logn_val,
+                sycl::buffer<std::complex<double>, 1>& encoding_buf)
         :   n(n_val), logn(logn_val), 
-            encoding_acc(encoding_buf), 
-            error_samples_acc(error_samples_buf) {}
+            encoding_acc(encoding_buf) {}
     
     void operator()(sycl::handler& h) const {
         // Get access to the buffers
-        auto encoding = encoding_acc.get_access<sycl::access::mode::read>(h);
-        auto error_samples = error_samples_acc.get_access<sycl::access::mode::read>(h);
-        
-        // Create a stream for debugging -- DON'T USE STREAMS IN FPGA KERNELS
-        //sycl::stream kernel_dbg_stream(1024 * 4, 256, h); // Debug stream
+        auto encoding = encoding_acc.get_access<sycl::access::mode::read_write>(h);
 
         // Capture kernel variables
         size_t kernel_n = n;
         size_t kernel_logn = logn;
-
         
         h.single_task([=]() [[intel::kernel_args_restrict]] {
-            //kernel_dbg_stream << "IFFTKernel: Starting..." << sycl::endl; // Debug message
-            // Debug message using printf
-            //sycl::ext::oneapi::experimental::printf("IFFTKernel: Starting...\n");
-            
-            // Local array to store input data
-            std::complex<double> encoding_local[4096];
-            
-            // Read data directly from buffer
-            for (size_t i = 0; i < kernel_n; i++) {
-                encoding_local[i] = encoding[i];
-            }
-            
             // Bit-reversal function 
-            auto bitrev = [](size_t input, size_t numbits) -> size_t {
+            auto bitrev = [](size_t input, size_t numbits) -> size_t 
+            {
                 size_t t = (((input & 0xaaaa) >> 1) | ((input & 0x5555) << 1));
                 t        = (((t & 0xcccc) >> 2) | ((t & 0x3333) << 2));
                 t        = (((t & 0xf0f0) >> 4) | ((t & 0x0f0f) << 4));
@@ -56,7 +37,8 @@ public:
             };
             
             // Root calculation function
-            auto calc_root_otf = [](size_t k, size_t m) -> std::complex<double> {
+            auto calc_root_otf = [](size_t k, size_t m) -> std::complex<double> 
+            {
                 double angle = 2.0 * M_PI * static_cast<double>(k) / static_cast<double>(m);
                 return std::complex<double>(sycl::cos(angle), sycl::sin(angle));
             };
@@ -64,45 +46,30 @@ public:
             // IFFT implementation 
             size_t tt = 1, h = kernel_n / 2;
             
-            for (size_t i = 0; i < kernel_logn; i++, tt *= 2, h /= 2) {
-                for (size_t j = 0, kstart = 0; j < h; j++, kstart += 2 * tt) {
+            for (size_t i = 0; i < kernel_logn; i++, tt *= 2, h /= 2) 
+            {
+                for (size_t j = 0, kstart = 0; j < h; j++, kstart += 2 * tt) 
+                {
                     std::complex<double> s;
                     size_t br = bitrev(h + j, kernel_logn);
                     s = std::conj(calc_root_otf(br, kernel_n << 1));
                     
-                    for (size_t k = kstart; k < kstart + tt; k++) {
-                        std::complex<double> u = encoding_local[k];
-                        std::complex<double> v = encoding_local[k + tt];
-                        encoding_local[k]      = u + v;
-                        encoding_local[k + tt] = (u - v) * s;
+                    for (size_t k = kstart; k < kstart + tt; k++) 
+                    {
+                        std::complex<double> u = encoding[k];
+                        std::complex<double> v = encoding[k + tt];
+                        encoding[k]      = u + v;
+                        encoding[k + tt] = (u - v) * s;
                     }
                 }
-            }
-            
-            //kernel_dbg_stream << "IFFTKernel: Computation finished. Writing to pipes..." << sycl::endl; // Debug message
-            // Use printf instead of stream
-            //sycl::ext::oneapi::experimental::printf("IFFTKernel: Computation finished. Writing to pipes...\n");
+            } // End of IFFT computation
 
-            // Pass both the transformed values and error samples through pipes
-            for (size_t i = 0; i < kernel_n; i++) {
+            // Pass the transformed values to the pipe
+            for (size_t i = 0; i < kernel_n; i++) 
+            {
                 // Write transformed encoding values to pipe
-                IFFTToScaleAndReducePipe::write(encoding_local[i]);
-                
-                // Also pass the error samples through to the next kernel
-                IFFTErrorToScaleAndReducePipe::write(error_samples[i]);
-
-                /*
-                if (i == 0 || i == kernel_n - 1) {
-                    // print the first and last values written to pipes
-                    sycl::ext::oneapi::experimental::printf("IFFTKernel: Writing to pipes, index %zu, encoded value %f\n", i, encoding_local[i].real());
-                    sycl::ext::oneapi::experimental::printf("IFFTKernel: Writing to pipes, index %zu, error sample %d\n", i, error_samples[i]);
-                }
-                */
+                IFFTToScaleAndReducePipe::write(encoding[i]);
             }
-
-            //kernel_dbg_stream << "IFFTKernel: Finished writing to pipes." << sycl::endl; // Debug message
-            // Use printf instead of stream
-            //sycl::ext::oneapi::experimental::printf("IFFTKernel: Finished writing to pipes.\n");
-        });
-    }
-};
+        }); // End of single_task
+    } // End of operator()
+}; // End of IFFTKernel class

@@ -170,7 +170,7 @@ void pipeline(
         // Submit IFFTKernel
         // IFFTKernel outputs to IFFTToScaleAndReducePipe and IFFTErrorToScaleAndReducePipe
         sycl::event ifft_event = q.submit([&](handler &h) {
-            IFFTKernel(n, logn, encoding_buf, error_samples_buf)(h);
+            IFFTKernel(n, logn, encoding_buf)(h);
         });
         //std::cout << "[Pipeline] Submitted IFFTKernel." << std::endl;
 
@@ -185,7 +185,7 @@ void pipeline(
         //std::cout << "[Pipeline] Submitting ScaleAndReduceKernel..." << std::endl;
         sycl::event scale_reduce_event = q.submit([&](handler &h) {
             //h.depends_on(ifft_event);
-            ScaleAndReduceKernel(n, scale, mod_value, const_ratio)(h);
+            ScaleAndReduceKernel(n, scale, mod_value, const_ratio, error_samples_buf)(h);
         });
         //std::cout << "[Pipeline] Submitted ScaleAndReduceKernel." << std::endl;
 
