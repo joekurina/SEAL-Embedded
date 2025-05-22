@@ -11,22 +11,18 @@ private:
     size_t n;
     uint32_t mod_value;
     const uint32_t* const_ratio; // For Barrett reduction in multiplication
-    //mutable sycl::buffer<uint32_t, 1> a_acc; // Input/Output buffer
     mutable sycl::buffer<uint32_t, 1> b_acc; // Input buffer
 
 public:
     PolyMultNegNTTKernel(size_t n_val, uint32_t mod_val, const uint32_t* const_ratio_val,
-                         //sycl::buffer<uint32_t, 1>& a_buf, // In/Out
                          sycl::buffer<uint32_t, 1>& b_buf) // In
         : n(n_val),
           mod_value(mod_val),
           const_ratio(const_ratio_val),
-          //a_acc(a_buf),
           b_acc(b_buf) {}
 
     void operator()(sycl::handler& h) const {
-        // Get access to buffers
-        //auto a = a_acc.get_access<sycl::access::mode::read_write>(h);
+        // Get access to buffer
         auto b = b_acc.get_access<sycl::access::mode::read>(h);
 
         // Capture necessary variables
@@ -38,7 +34,6 @@ public:
             // Process each coefficient
             for (size_t i = 0; i < kernel_n; i++) {
                 // Get initial values
-                //uint32_t a_val = a[i];
                 uint32_t a_val = NTTToPolyMultNegPipe::read(); // Read from the pipe
                 uint32_t b_val = b[i];
 
@@ -125,9 +120,7 @@ public:
                 } // End of negation logic
 
 
-                // --- Step 3: Store final negated result back into a[i] ---
-                //a[i] = neg_result;
-                // Write the negated result to the pipe for further processing
+                // --- Step 3: Write the negated result to the pipe for further processing
                 PolyMultNegToPolyAddModPipe::write(neg_result); // Write to the pipe
             }
         });
