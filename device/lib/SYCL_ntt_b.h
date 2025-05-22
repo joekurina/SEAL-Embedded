@@ -256,11 +256,18 @@ public:
             }
             // --- End of NTT Computation ---
 
+            // Write the results to the pipe
             for(size_t i = 0; i < kernel_n; ++i) 
             {
-                out_data_accessor[i] = local_data[i];
-                //NTTToAddModPipe::write(local_data[i]);
+                NTTToAddModPipe::write(local_data[i]);
             }
+
+            // Write the results to the output buffer
+            for(size_t i = 0; i < kernel_n; ++i)
+            {
+                out_data_accessor[i] = local_data[i];
+            }
+            
         }); // End of single_task
     } // End of operator()
 }; // End of NTTKernel_B class

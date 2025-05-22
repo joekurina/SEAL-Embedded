@@ -26,3 +26,11 @@ using ScaleReduceToNTTBPipe =
 // Pipe from NTTKernel_B to AddModKernel for NTT(PTE+error)
 using NTTToAddModPipe =
     sycl::ext::intel::pipe<class NTTToAddModPipeID, uint32_t, PIPE_CAPACITY>;
+
+// Pipe from NTTKernel_A to PolyMultNegNTTKernel for NTT(s)
+using NTTToPolyMultNegPipe =
+    sycl::ext::intel::pipe<class NTTToPolyMultNegPipeID, uint32_t, PIPE_CAPACITY>;
+
+// Pipe from PolyMultNegNTTKernel to PolyAddModKernel for -(NTT(s)*c1)
+using PolyMultNegToPolyAddModPipe =
+    sycl::ext::intel::pipe<class PolyMultNegToPolyAddModPipeID, uint32_t, PIPE_CAPACITY>;

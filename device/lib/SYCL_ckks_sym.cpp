@@ -199,9 +199,9 @@ void pipeline(
         // NTTKernel_1 reads from ScaleReduceToNTT1Pipe and writes its result to ntt_pte_buf.
         //std::cout << "[Pipeline] Submitting NTTKernel_1..." << std::endl;
         sycl::event nttB_event = q.submit([&](handler &h) {
-            //h.depends_on(scale_reduce_event);
             NTTKernel_B(n, logn, mod_value, root, const_ratio, ntt_pte_buf)(h);
-            //DummyKernel(n, ntt_pte_buf)(h); // Launch the dummy kernel instead of NTTKernel_1
+            //NTTKernel_B(n, logn, mod_value, root, const_ratio)(h);
+
         });
         //std::cout << "[Pipeline] Submitted NTTKernel_1." << std::endl;
 
@@ -210,7 +210,8 @@ void pipeline(
         //std::cout << "[Pipeline] Submitting PolyMultNegNTTKernel..." << std::endl;
         sycl::event mult_neg_event = q.submit([&](handler &h) {
             h.depends_on(nttA_event); // Depends on NTT2 completion
-            PolyMultNegNTTKernel(n, mod_value, const_ratio, c0_s_buf, c1_buf)(h);
+            //PolyMultNegNTTKernel(n, mod_value, const_ratio, c0_s_buf, c1_buf)(h);
+            PolyMultNegNTTKernel(n, mod_value, const_ratio, c1_buf)(h);
         });
         //std::cout << "[Pipeline] Submitted PolyMultNegNTTKernel." << std::endl;
 
@@ -220,7 +221,8 @@ void pipeline(
         //std::cout << "[Pipeline] Submitting PolyAddModKernel..." << std::endl;
         sycl::event add_event = q.submit([&](handler &h) {
             h.depends_on({nttB_event, mult_neg_event});
-            PolyAddModKernel(n, mod_value, c0_s_buf, ntt_pte_buf)(h);
+            //PolyAddModKernel(n, mod_value, c0_s_buf, ntt_pte_buf)(h);
+            PolyAddModKernel(n, mod_value, c0_s_buf)(h);
         });
         //std::cout << "[Pipeline] Submitted PolyAddModKernel." << std::endl;
 

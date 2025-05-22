@@ -14,7 +14,7 @@ private:
     uint32_t mod_value;
     uint32_t root;
     const uint32_t* const_ratio;
-    mutable sycl::buffer<uint32_t, 1> vec_acc;    // Primary In/Out buffer
+    mutable sycl::buffer<uint32_t, 1> vec_acc;    // Input buffer
     mutable sycl::buffer<uint32_t, 1> save_acc;   // Save destination buffer
     
     
@@ -22,7 +22,7 @@ public:
     // Constructor accepting both primary and save buffers
     NTTKernel_A(size_t n_val, size_t logn_val, uint32_t mod_val, uint32_t root_val,
                 const uint32_t* const_ratio_val,
-                sycl::buffer<uint32_t, 1>& vec_buf,  // In/Out (Primary)
+                sycl::buffer<uint32_t, 1>& vec_buf,  // Input (NTT input)
                 sycl::buffer<uint32_t, 1>& save_buf) // Out only (Save)
         : n(n_val), logn(logn_val), mod_value(mod_val), root(root_val),
             const_ratio(const_ratio_val),
@@ -46,11 +46,10 @@ public:
         // Perform host-side check if save buffer is valid before launching kernel
         bool save_output = (save_acc.get_range() == sycl::range(kernel_n));
 
-        //sycl::ext::oneapi::experimental::printf("NTTKernel_2: Starting kernel (Dual output)...\n");
-
         h.single_task([=]() [[intel::kernel_args_restrict]] {
             size_t hsize = 1;
             size_t tt = kernel_n / 2;
+            uint32_t output_data[PIPE_CAPACITY];
 
             // Loop over stages
             for (size_t i = 0; i < kernel_logn; i++, hsize *= 2, tt /= 2) {
@@ -262,9 +261,12 @@ public:
                             }
                         }
 
-                        // Write results to BOTH buffers ***
-                        data[k] = result_add;       // Write result to primary buffer
-                        data[k + tt] = result_sub;  // Write result to primary buffer
+
+                        // Write results to output buffers ***
+                        //data[k] = result_add;       // Write result to primary buffer
+                        //data[k + tt] = result_sub;  // Write result to primary buffer
+                        output_data[k] = result_add;
+                        output_data[k + tt] = result_sub; 
 
                         // Conditionally write to save buffer if requested
                         if (save_output) {
@@ -274,7 +276,10 @@ public:
                     } // End loop k
                 } // End loop j
             } // End loop i (stages)
-
+            // Write the results to the pipe
+            for (size_t i = 0; i < kernel_n; ++i) {
+                NTTToPolyMultNegPipe::write(output_data[i]);
+            }
             //sycl::ext::oneapi::experimental::printf("NTTKernel_2: Finished NTT computation (Dual output).\n");
         }); // End single_task lambda
     } // End operator()
