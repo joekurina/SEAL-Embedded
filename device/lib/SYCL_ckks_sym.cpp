@@ -35,8 +35,8 @@ void pipeline(
     uint32_t mod_value,
     uint32_t root,
     const uint32_t* const_ratio,
-    buffer<std::complex<double>, 1>& encoding_buf,
-    buffer<int8_t, 1>& error_samples_buf,
+    std::complex<double>* encoding_usm_ptr,
+    const int8_t* error_samples_usm_ptr, // Changed to USM pointer
     buffer<uint32_t, 1>& ntt_pte_buf,
     buffer<uint32_t, 1>& c0_s_buf,
     buffer<uint32_t, 1>& c1_buf,
@@ -73,6 +73,14 @@ extern "C" void SYCL_combined_encrypt(
     uint32_t* c1_save               // Output: Destination buffer for saving the original uniform polynomial 'a'. NULL if not needed.
 ) {
     
+    // Create queue
+#if FPGA_HARDWARE
+    auto selector = ext::intel::fpga_selector_v;
+#else
+    auto selector = ext::intel::fpga_emulator_selector_v;
+#endif
+    queue q{selector, property::queue::enable_profiling()};
+
     // Calculate the NTT root
     uint32_t root = NTT_root(n, mod_value);
 
@@ -96,11 +104,17 @@ extern "C" void SYCL_combined_encrypt(
     // Create SYCL buffers that associate host memory pointers with device-accessible objects.
     // Data will be implicitly managed (copied to/from device) by the SYCL runtime as needed by kernel accessors.
 
-    // Buffer for the input complex-encoded plaintext values. Read by IFFTKernel.
-    buffer<std::complex<double>, 1> encoding_buf(encoding_buffer, range(n));
+    // Allocate USM for encoding_buffer
+    std::complex<double>* encoding_usm_ptr = sycl::malloc_shared<std::complex<double>>(n, q);
 
-    // Buffer for the input error samples. Read by IFFTKernel.
-    buffer<int8_t, 1> error_samples_buf(error_samples, range(n));
+    // Copy data from host pointer to USM
+    q.memcpy(encoding_usm_ptr, encoding_buffer, n * sizeof(std::complex<double>)).wait();
+
+    // Allocate USM for error_samples_buf
+    int8_t* error_samples_usm_ptr = sycl::malloc_shared<int8_t>(n, q);
+
+    // Copy data from host pointer to USM
+    q.memcpy(error_samples_usm_ptr, error_samples, n * sizeof(int8_t)).wait();
 
     // Buffer used for intermediate storage and NTT of plaintext+error.
     // Written by ScaleAndReduceKernel, Read/Written by NTTKernel_1, Read by PolyAddModKernel.
@@ -125,14 +139,6 @@ extern "C" void SYCL_combined_encrypt(
          s_save_buf = buffer<uint32_t, 1>(s_save, range(n));
     }
 
-    // Create queue
-#if FPGA_HARDWARE
-    auto selector = ext::intel::fpga_selector_v;
-#else
-    auto selector = ext::intel::fpga_emulator_selector_v;
-#endif
-    queue q{selector, property::queue::enable_profiling()};
-
     // Execute the full pipeline
     pipeline(
         q,
@@ -142,13 +148,17 @@ extern "C" void SYCL_combined_encrypt(
         mod_value,
         root,
         const_ratio,
-        encoding_buf,
-        error_samples_buf,
+        encoding_usm_ptr,
+        error_samples_usm_ptr,
         ntt_pte_buf,
         c0_s_buf,
         c1_buf,
         s_save_buf
     );
+
+    // Free USM memory
+    sycl::free(encoding_usm_ptr, q);
+    sycl::free(error_samples_usm_ptr, q);
 
     // Results are now in c0_s and s_save host pointers (due to buffer destruction sync)
 }
@@ -162,75 +172,47 @@ void pipeline(
     uint32_t mod_value,                             // The modulus value (q).
     uint32_t root,                                  // The NTT root for the polynomial ring.
     const uint32_t* const_ratio,                    // Precomputed constant ratio for Barrett reduction modulo q.
-    buffer<std::complex<double>, 1>& encoding_buf,  // Input buffer: Complex-encoded plaintext values.
-    buffer<int8_t, 1>& error_samples_buf,           // Input buffer: Noise/error samples.
-    buffer<uint32_t, 1>& ntt_pte_buf,               // MODIFIED ROLE: Now primarily the OUTPUT buffer for NTTKernel_1. Holds NTT(plaintext + error).
+    std::complex<double>* encoding_usm_ptr,         // Input USM pointer: Complex-encoded plaintext values.
+    const int8_t* error_samples_usm_ptr,            // Input USM pointer: Noise/error samples.
+    buffer<uint32_t, 1>& ntt_pte_buf,               // Output buffer for NTTKernel_1. Holds NTT(plaintext + error).
     buffer<uint32_t, 1>& c0_s_buf,                  // Main work buffer: Input is expanded_s, intermediate results include NTT(s) and -(NTT(s)*c1), final output is ciphertext component c0.
     buffer<uint32_t, 1>& c1_buf,                    // Input buffer: Uniform polynomial 'a' (ciphertext component c1). Read by PolyMultNeg.
     buffer<uint32_t, 1>& s_save_buf                 // Output buffer: Destination for saving the NTT(s) state from NTTKernel_2 if requested.
 ) {
-    //std::cout << "[Pipeline] Starting Full Integration (NTT2 Dual Output)..." << std::endl;
     try {
-
-        // --- Kernels that can start immediately ---
-
         // Submit IFFTKernel
-        // IFFTKernel outputs to IFFTToScaleAndReducePipe and IFFTErrorToScaleAndReducePipe
-        sycl::event ifft_event = q.submit([&](handler &h) {
-            IFFTKernel(n, logn, encoding_buf)(h);
+        q.submit([&](handler &h) {
+            IFFTKernel(n, logn, encoding_usm_ptr)(h);
         });
-        //std::cout << "[Pipeline] Submitted IFFTKernel." << std::endl;
 
-        // Submit NTTKernel_2 (Operates on c0_s_buf AND writes to s_save_buf)
-        //std::cout << "[Pipeline] Submitting NTTKernel_2 (Dual Output)..." << std::endl;
-        sycl::event nttA_event = q.submit([&](handler &h) {
+        // Submit NTTKernel_A (Operates on c0_s_buf AND writes to s_save_buf)
+        q.submit([&](handler &h) {
             NTTKernel_A(n, logn, mod_value, root, const_ratio, c0_s_buf, s_save_buf)(h);
         });
-        //std::cout << "[Pipeline] Submitted NTTKernel_2." << std::endl;
 
         // ScaleAndReduceKernel reads from IFFT pipes and writes to ScaleReduceToNTT1Pipe
-        //std::cout << "[Pipeline] Submitting ScaleAndReduceKernel..." << std::endl;
-        sycl::event scale_reduce_event = q.submit([&](handler &h) {
-            //h.depends_on(ifft_event);
-            ScaleAndReduceKernel(n, scale, mod_value, const_ratio, error_samples_buf)(h);
+        q.submit([&](handler &h) {
+            ScaleAndReduceKernel(n, scale, mod_value, const_ratio, error_samples_usm_ptr)(h);
         });
-        //std::cout << "[Pipeline] Submitted ScaleAndReduceKernel." << std::endl;
 
-        // NTTKernel_1 reads from ScaleReduceToNTT1Pipe and writes its result to ntt_pte_buf.
-        //std::cout << "[Pipeline] Submitting NTTKernel_1..." << std::endl;
-        sycl::event nttB_event = q.submit([&](handler &h) {
+        // NTTKernel_B reads from ScaleReduceToNTT1Pipe and writes its result to ntt_pte_buf.
+        q.submit([&](handler &h) {
             NTTKernel_B(n, logn, mod_value, root, const_ratio, ntt_pte_buf)(h);
-            //NTTKernel_B(n, logn, mod_value, root, const_ratio)(h);
 
         });
-        //std::cout << "[Pipeline] Submitted NTTKernel_1." << std::endl;
 
         // Submit PolyMultNegNTTKernel
-        // Depends on NTT2 completing its write to c0_s_buf
-        //std::cout << "[Pipeline] Submitting PolyMultNegNTTKernel..." << std::endl;
-        sycl::event mult_neg_event = q.submit([&](handler &h) {
-            h.depends_on(nttA_event); // Depends on NTT2 completion
-            //PolyMultNegNTTKernel(n, mod_value, const_ratio, c0_s_buf, c1_buf)(h);
+        q.submit([&](handler &h) {
             PolyMultNegNTTKernel(n, mod_value, const_ratio, c1_buf)(h);
         });
-        //std::cout << "[Pipeline] Submitted PolyMultNegNTTKernel." << std::endl;
 
-        // --- Final Kernel dependent on NTT1 and MultNeg ---
         // PolyAddModKernel reads from c0_s_buf and ntt_pte_buf.
-        // ntt_pte_buf is now populated by NTTKernel_1.
-        //std::cout << "[Pipeline] Submitting PolyAddModKernel..." << std::endl;
-        sycl::event add_event = q.submit([&](handler &h) {
-            h.depends_on({nttB_event, mult_neg_event});
-            //PolyAddModKernel(n, mod_value, c0_s_buf, ntt_pte_buf)(h);
+        q.submit([&](handler &h) {
             PolyAddModKernel(n, mod_value, c0_s_buf)(h);
         });
-        //std::cout << "[Pipeline] Submitted PolyAddModKernel." << std::endl;
 
         // Wait for the final PolyAddModKernel kernel to complete
-        add_event.wait();
-
-        //std::cout << "[Pipeline] Full pipeline execution completed." << std::endl;
-
+        //add_event.wait();
     } catch (std::exception const &e) { // Catch other standard exceptions
         std::cout << "[Pipeline] STANDARD EXCEPTION CAUGHT!" << std::endl;
         std::cerr << "Caught a standard exception in pipeline: "

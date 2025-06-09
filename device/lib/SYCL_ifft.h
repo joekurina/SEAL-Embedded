@@ -9,25 +9,23 @@ class IFFTKernel {
 private:
     size_t n;
     size_t logn;
-    mutable sycl::buffer<std::complex<double>, 1> encoding_acc;
+    std::complex<double>* encoding_ptr;
 
 public:
     IFFTKernel( size_t n_val, size_t logn_val,
-                sycl::buffer<std::complex<double>, 1>& encoding_buf)
+                std::complex<double>* encoding_input_ptr)
         :   n(n_val), logn(logn_val), 
-            encoding_acc(encoding_buf) {}
+            encoding_ptr(encoding_input_ptr) {}
     
     void operator()(sycl::handler& h) const {
-        // Get access to the buffers
-        auto encoding = encoding_acc.get_access<sycl::access::mode::read_write>(h);
-
         // Capture kernel variables
         size_t kernel_n = n;
         size_t kernel_logn = logn;
+        auto captured_encoding_ptr = encoding_ptr;
         
         h.single_task([=]() [[intel::kernel_args_restrict]] {
-            // Bit-reversal function 
-            auto bitrev = [](size_t input, size_t numbits) -> size_t 
+            // Bit-reversal function
+            auto bitrev = [](size_t input, size_t numbits) -> size_t
             {
                 size_t t = (((input & 0xaaaa) >> 1) | ((input & 0x5555) << 1));
                 t        = (((t & 0xcccc) >> 2) | ((t & 0x3333) << 2));
@@ -37,38 +35,38 @@ public:
             };
             
             // Root calculation function
-            auto calc_root_otf = [](size_t k, size_t m) -> std::complex<double> 
+            auto calc_root_otf = [](size_t k, size_t m) -> std::complex<double>
             {
                 double angle = 2.0 * M_PI * static_cast<double>(k) / static_cast<double>(m);
                 return std::complex<double>(sycl::cos(angle), sycl::sin(angle));
             };
             
-            // IFFT implementation 
+            // IFFT implementation
             size_t tt = 1, h = kernel_n / 2;
             
-            for (size_t i = 0; i < kernel_logn; i++, tt *= 2, h /= 2) 
+            for (size_t i = 0; i < kernel_logn; i++, tt *= 2, h /= 2)
             {
-                for (size_t j = 0, kstart = 0; j < h; j++, kstart += 2 * tt) 
+                for (size_t j = 0, kstart = 0; j < h; j++, kstart += 2 * tt)
                 {
                     std::complex<double> s;
                     size_t br = bitrev(h + j, kernel_logn);
                     s = std::conj(calc_root_otf(br, kernel_n << 1));
                     
-                    for (size_t k = kstart; k < kstart + tt; k++) 
+                    for (size_t k = kstart; k < kstart + tt; k++)
                     {
-                        std::complex<double> u = encoding[k];
-                        std::complex<double> v = encoding[k + tt];
-                        encoding[k]      = u + v;
-                        encoding[k + tt] = (u - v) * s;
+                        std::complex<double> u = captured_encoding_ptr[k];
+                        std::complex<double> v = captured_encoding_ptr[k + tt];
+                        captured_encoding_ptr[k]      = u + v;
+                        captured_encoding_ptr[k + tt] = (u - v) * s;
                     }
                 }
             } // End of IFFT computation
 
             // Pass the transformed values to the pipe
-            for (size_t i = 0; i < kernel_n; i++) 
+            for (size_t i = 0; i < kernel_n; i++)
             {
                 // Write transformed encoding values to pipe
-                IFFTToScaleAndReducePipe::write(encoding[i]);
+                IFFTToScaleAndReducePipe::write(captured_encoding_ptr[i]);
             }
         }); // End of single_task
     } // End of operator()

@@ -14,35 +14,29 @@ private:
     double scale;
     uint32_t mod_value;
     const uint32_t* const_ratio;
-    mutable sycl::buffer<int8_t, 1> error_samples_acc;
+    const int8_t* error_samples_ptr;
 
 public:
-    // Constructor takes combined arguments
     ScaleAndReduceKernel(size_t n_val, double scale_val, uint32_t mod_val,
                          const uint32_t* const_ratio_val,
-                         sycl::buffer<int8_t, 1>& error_samples_buf)
+                         const int8_t* error_samples_input_ptr)
         : n(n_val),
           scale(scale_val),
           mod_value(mod_val),
           const_ratio(const_ratio_val), 
-          error_samples_acc(error_samples_buf) {}
+          error_samples_ptr(error_samples_input_ptr) {}
 
     void operator()(sycl::handler& h) const 
     {
-        // Get access to the error samples buffer
-        auto error_samples = error_samples_acc.get_access<sycl::access::mode::read>(h);
-
         // Capture necessary variables
         size_t kernel_n = n; 
         double kernel_scale = scale;
         uint32_t kernel_mod_val = mod_value;
         const uint32_t* kernel_const_ratio = const_ratio;
+        const int8_t* captured_error_samples_ptr = error_samples_ptr;
 
-        h.single_task([=]() [[intel::kernel_args_restrict]] 
+        h.single_task([=]() [[intel::kernel_args_restrict]]
         {
-            // --- Local array to buffer pipe data ---
-            std::complex<double> local_encoded_data[PIPE_CAPACITY];
-
             // --- Processing Phase ---
             double n_inv = kernel_scale / static_cast<double>(kernel_n);
 
@@ -52,7 +46,8 @@ public:
                 double real_val = encoded_value.real();
                 double scaled = sycl::round(real_val * n_inv);
                 int64_t int_val = static_cast<int64_t>(scaled);
-                int64_t intermediate_result = int_val + error_samples[i];
+                // Direct access using the USM pointer (captured as a value)
+                int64_t intermediate_result = int_val + captured_error_samples_ptr[i];
 
                 int64_t val = intermediate_result;
                 uint64_t coeff_abs = (val < 0) ? static_cast<uint64_t>(-val) : static_cast<uint64_t>(val);
