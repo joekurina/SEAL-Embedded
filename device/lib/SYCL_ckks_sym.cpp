@@ -169,67 +169,37 @@ void pipeline(
     buffer<uint32_t, 1>& c1_buf,                    // Input buffer: Uniform polynomial 'a' (ciphertext component c1). Read by PolyMultNeg.
     buffer<uint32_t, 1>& s_save_buf                 // Output buffer: Destination for saving the NTT(s) state from NTTKernel_2 if requested.
 ) {
-    //std::cout << "[Pipeline] Starting Full Integration (NTT2 Dual Output)..." << std::endl;
     try {
 
-        // --- Kernels that can start immediately ---
-
         // Submit IFFTKernel
-        // IFFTKernel outputs to IFFTToScaleAndReducePipe and IFFTErrorToScaleAndReducePipe
-        sycl::event ifft_event = q.submit([&](handler &h) {
+        q.submit([&](handler &h) {
             IFFTKernel(n, logn, encoding_buf)(h);
         });
-        //std::cout << "[Pipeline] Submitted IFFTKernel." << std::endl;
 
         // Submit NTTKernel_2 (Operates on c0_s_buf AND writes to s_save_buf)
-        //std::cout << "[Pipeline] Submitting NTTKernel_2 (Dual Output)..." << std::endl;
-        sycl::event nttA_event = q.submit([&](handler &h) {
+        q.submit([&](handler &h) {
             NTTKernel_A(n, logn, mod_value, root, const_ratio, c0_s_buf, s_save_buf)(h);
         });
-        //std::cout << "[Pipeline] Submitted NTTKernel_2." << std::endl;
 
         // ScaleAndReduceKernel reads from IFFT pipes and writes to ScaleReduceToNTT1Pipe
-        //std::cout << "[Pipeline] Submitting ScaleAndReduceKernel..." << std::endl;
-        sycl::event scale_reduce_event = q.submit([&](handler &h) {
-            //h.depends_on(ifft_event);
+        q.submit([&](handler &h) {
             ScaleAndReduceKernel(n, scale, mod_value, const_ratio, error_samples_buf)(h);
         });
-        //std::cout << "[Pipeline] Submitted ScaleAndReduceKernel." << std::endl;
 
         // NTTKernel_1 reads from ScaleReduceToNTT1Pipe and writes its result to ntt_pte_buf.
-        //std::cout << "[Pipeline] Submitting NTTKernel_1..." << std::endl;
-        sycl::event nttB_event = q.submit([&](handler &h) {
+        q.submit([&](handler &h) {
             NTTKernel_B(n, logn, mod_value, root, const_ratio, ntt_pte_buf)(h);
-            //NTTKernel_B(n, logn, mod_value, root, const_ratio)(h);
-
         });
-        //std::cout << "[Pipeline] Submitted NTTKernel_1." << std::endl;
 
         // Submit PolyMultNegNTTKernel
-        // Depends on NTT2 completing its write to c0_s_buf
-        //std::cout << "[Pipeline] Submitting PolyMultNegNTTKernel..." << std::endl;
-        sycl::event mult_neg_event = q.submit([&](handler &h) {
-            h.depends_on(nttA_event); // Depends on NTT2 completion
-            //PolyMultNegNTTKernel(n, mod_value, const_ratio, c0_s_buf, c1_buf)(h);
+        q.submit([&](handler &h) {
             PolyMultNegNTTKernel(n, mod_value, const_ratio, c1_buf)(h);
         });
-        //std::cout << "[Pipeline] Submitted PolyMultNegNTTKernel." << std::endl;
 
-        // --- Final Kernel dependent on NTT1 and MultNeg ---
         // PolyAddModKernel reads from c0_s_buf and ntt_pte_buf.
-        // ntt_pte_buf is now populated by NTTKernel_1.
-        //std::cout << "[Pipeline] Submitting PolyAddModKernel..." << std::endl;
-        sycl::event add_event = q.submit([&](handler &h) {
-            h.depends_on({nttB_event, mult_neg_event});
-            //PolyAddModKernel(n, mod_value, c0_s_buf, ntt_pte_buf)(h);
+        q.submit([&](handler &h) {
             PolyAddModKernel(n, mod_value, c0_s_buf)(h);
         });
-        //std::cout << "[Pipeline] Submitted PolyAddModKernel." << std::endl;
-
-        // Wait for the final PolyAddModKernel kernel to complete
-        add_event.wait();
-
-        //std::cout << "[Pipeline] Full pipeline execution completed." << std::endl;
 
     } catch (std::exception const &e) { // Catch other standard exceptions
         std::cout << "[Pipeline] STANDARD EXCEPTION CAUGHT!" << std::endl;
@@ -237,7 +207,7 @@ void pipeline(
                   << e.what() << std::endl;
         std::exit(1);
     }
-    //std::cout << "[Pipeline] Exiting." << std::endl;
+
 } // End of pipeline function
 
 uint32_t NTT_root(std::size_t n, uint32_t mod_val)
