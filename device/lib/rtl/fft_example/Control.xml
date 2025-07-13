@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<?xml-stylesheet type="text/xsl" href="file:////opt/altera_pro/25.1/quartus/dspba/Blocksets/BaseBlocks/modelip.xsl"?>
+<MODEL>
+<NAME>fft_example/Control</NAME>
+<BUILD_YEAR>2025</BUILD_YEAR>
+<DOCPATH>file:////opt/altera_pro/25.1/quartus/dspba/Docs/Help/</DOCPATH>
+<DESCRIPTION>
+This help page relates to the specific instance 'Control' of the CONTROL block
+</DESCRIPTION>
+<HELP>file:////opt/altera_pro/25.1/quartus/dspba/Docs/Help/CONTROL_help.html</HELP>
+<BLOCKTYPE>CONTROL</BLOCKTYPE>
+<RESOURCES>
+<FUNIT>
+ <FUNAME>fft_example/DUT</FUNAME>
+ <FUTYPE>SYNTH</FUTYPE>
+ <LUT4>180699</LUT4>
+ <MULT>352</MULT>
+ <BITS>196608</BITS>
+ <BLOCKS>48</BLOCKS>
+</FUNIT>
+</RESOURCES>
+</MODEL>

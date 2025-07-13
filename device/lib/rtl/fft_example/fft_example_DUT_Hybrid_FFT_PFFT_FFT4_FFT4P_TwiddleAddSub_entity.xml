@@ -1,0 +1,4 @@
+<?xml version='1.0' encoding='ISO-8859-1' ?>
+<entity name='fft_example_DUT_Hybrid_FFT_PFFT_FFT4_FFT4P_TwiddleAddSub' floating-point-script-prefix='fft_example_DUT_Hybrid_FFT_PFFT_FFT4_FFT4P_TwiddleAddSub_fpc'>
+  <clock name='sys' port='clk' reset='areset' reset-type='high' />
+</entity>

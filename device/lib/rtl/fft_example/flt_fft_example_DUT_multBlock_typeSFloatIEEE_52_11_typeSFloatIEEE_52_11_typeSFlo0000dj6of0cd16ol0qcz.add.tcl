@@ -1,0 +1,4 @@
+# This is the Quartus file list for 'flt_fft_example_DUT_multBlock_typeSFloatIEEE_52_11_typeSFloatIEEE_52_11_typeSFlo0000of0cdj6of0cd16ol0qcz'
+
+set_global_assignment -name VHDL_FILE ./rtl/fft_example/fft_example_DUT_safe_path.vhd 
+set_global_assignment -name VHDL_FILE ./rtl/fft_example/flt_fft_example_DUT_multBlock_typeSFloatIEEE_52_11_typeSFloatIEEE_52_11_typeSFlo0000of0cdj6of0cd16ol0qcz.vhd 

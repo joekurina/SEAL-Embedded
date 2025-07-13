@@ -1,0 +1,49 @@
+
+<RTL_SPEC>
+
+  <FUNCTION module="the_fft_module" name="the_fft">
+    <ATTRIBUTES>
+      <IS_STALL_FREE value="yes"/>
+      <IS_FIXED_LATENCY value="yes"/>
+      <EXPECTED_LATENCY value="1"/>
+      <CAPACITY value="1"/>
+      <HAS_SIDE_EFFECTS value="yes"/>
+      <ALLOW_MERGING value="yes"/>
+    </ATTRIBUTES>
+    <INTERFACE>
+      <AVALON port="clock" type="clock"/>
+      <AVALON port="resetn" type="resetn"/>
+      <AVALON port="ivalid" type="ivalid"/>
+      <AVALON port="iready" type="iready"/>
+      <AVALON port="ovalid" type="ovalid"/>
+      <AVALON port="oready" type="oready"/>
+      <INPUT port="idata" width="528"/>
+      <OUTPUT port="odata" width="528"/>
+    </INTERFACE>
+    <REQUIREMENTS>
+      <FILE name="dspba_library_package.vhd"/>
+      <FILE name="dspba_library.vhd"/>
+      <FILE name="dspba_library_ver.sv"/>
+      <FILE name="dspba_sim_library_package.vhd"/>
+      <FILE name="dspba_s10_optimized_package.vhd"/>
+      <FILE name="dspba_s10_optimized.sv"/>
+      <FILE name="dspba_s10_optimized.vhd"/>
+      <FILE name="../fft_example/fft_example_DUT_safe_path_flat.vhd"/>
+      <FILE name="../fft_example/flt_fft_example_DUT_subBlock_typeSFloatIEEE_52_11_typeSFloatIEEE_52_11_typeSFloa00000cdj6of0cd16ok0ct30u.vhd"/>
+      <FILE name="../fft_example/flt_fft_example_DUT_multBlock_typeSFloatIEEE_52_11_typeSFloatIEEE_52_11_typeSFlo0000of0cdj6of0cd16ol0qcz.vhd"/>
+      <FILE name="../fft_example/flt_fft_example_DUT_addBlock_typeSFloatIEEE_52_11_typeSFloatIEEE_52_11_typeSFloa0000j6of0cd16ok0cp06hj0u.vhd"/>
+      <FILE name="../fft_example/flt_fft_example_DUT_castBlock_typeSFloatIEEE_52_11_typeSFloatIEEE_52_11_castMode0000226123642i229742iyc5.vhd"/>
+      <FILE name="../fft_example/flt_fft_example_DUT_addSubFusedBlock_typeSFloatIEEE_52_11_4_correctRounding_38560000x0ao30cd06cj6ok0dpzc.vhd"/>
+      <FILE name="../fft_example/fft_example_DUT.vhd"/>
+      <FILE name="the_fft_module.sv"/>
+    </REQUIREMENTS>
+    <RESOURCES>
+      <ALUTS value="180699"/>
+      <FFS value="122340"/>
+      <RAMS value="48"/>
+      <MLABS value="239"/>
+      <DSPS value="176"/>
+    </RESOURCES>
+  </FUNCTION>
+
+</RTL_SPEC>

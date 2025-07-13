@@ -1,0 +1,15 @@
+-- safe_path for fft_example_DUT given rtl dir is ./rtl (modelsim)
+LIBRARY ieee;
+USE ieee.std_logic_1164.all;
+
+PACKAGE fft_example_DUT_safe_path is
+	FUNCTION safe_path( path: string ) RETURN string;
+END fft_example_DUT_safe_path;
+
+PACKAGE body fft_example_DUT_safe_path IS
+	FUNCTION safe_path( path: string )
+		RETURN string IS
+	BEGIN
+		RETURN path;
+	END FUNCTION safe_path;
+END fft_example_DUT_safe_path;

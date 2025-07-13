@@ -1,0 +1,10 @@
+{
+    "map": {
+        "DUT/ChannelIn_vunroll_cunroll_x": "fft_example_DUT_ChannelIn_vunroll_cunroll_x.stm",
+        "DUT/ChannelOut_vunroll_cunroll_x": "fft_example_DUT_ChannelOut_vunroll_cunroll_x.stm"
+    },
+    "reverse_map": {
+        "fft_example_DUT_ChannelIn_vunroll_cunroll_x.stm": "DUT/ChannelIn_vunroll_cunroll_x",
+        "fft_example_DUT_ChannelOut_vunroll_cunroll_x.stm": "DUT/ChannelOut_vunroll_cunroll_x"
+    }
+}
