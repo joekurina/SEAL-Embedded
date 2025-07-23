@@ -6,6 +6,7 @@
 #include "SYCL_pipes.h"
 
 // Include the SYCL kernel headers
+#include "SYCL_entrance.h"
 #include "SYCL_ifft.h"
 #include "SYCL_ntt_a.h"
 #include "SYCL_ntt_b.h"
@@ -171,9 +172,14 @@ void pipeline(
 ) {
     try {
 
+        // Submit EntranceKernel to feed data into the pipeline
+        q.submit([&](handler &h) {
+            EntranceKernel(n, encoding_buf)(h);
+        });
+
         // Submit IFFTKernel
         q.submit([&](handler &h) {
-            IFFTKernel(n, logn, encoding_buf)(h);
+            IFFTKernel()(h);
         });
 
         // Submit NTTKernel_2 (Operates on c0_s_buf AND writes to s_save_buf)

@@ -12,6 +12,13 @@ set(FPGA_DEVICE "Agilex7")
 set(TARGET_NAME sealembedded)
 set(REPORT_ARTIFACT_NAME ${TARGET_NAME}_report_artifact)
 
+# FFT Library Configuration
+set(FFT_LIBRARY ${CMAKE_CURRENT_SOURCE_DIR}/lib/rtl/the_fft.a)
+# Force -O0 when linking with the_fft.a to avoid optimization conflicts  
+set(FFT_COMPAT_FLAGS "-O0")
+# Required FFT library flags (combined for proper handling)
+set(FFT_REQUIRED_FLAGS "-DCSL_USE_GMP;-DCSL_SYCL;-qactypes")
+
 set(BASE_C_FLAGS "-std=c99 -Rno-debug-disables-optimization")
 set(BASE_CXX_FLAGS "-fsycl -std=c++17 -Rno-debug-disables-optimization")
 
@@ -94,7 +101,10 @@ add_library(${TARGET_NAME} STATIC ${SE_LIB_SOURCE_FILES})
 target_include_directories(${TARGET_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/lib>)
 target_include_directories(${TARGET_NAME} PUBLIC ${SE_ADAPTER_FILE_OUTPUT_DIR})
+target_compile_options(${TARGET_NAME} PRIVATE ${FFT_REQUIRED_FLAGS})
 target_link_libraries(${TARGET_NAME} PRIVATE m)
+target_link_options(${TARGET_NAME} PRIVATE ${FFT_COMPAT_FLAGS})
+target_link_libraries(${TARGET_NAME} PRIVATE ${FFT_LIBRARY})
 
 if(NOT DEFINED SEAL_EMBEDDED_VERSION)
   set(SEAL_EMBEDDED_VERSION "1.1.0")
@@ -105,7 +115,10 @@ set_target_properties(${TARGET_NAME} PROPERTIES OUTPUT_NAME ${TARGET_NAME})
 if(SE_BUILD_TYPE STREQUAL "Tests")
     if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/main.c")
         add_executable(seal_embedded_tests ${SE_TESTS_SOURCE_FILES})
+        target_compile_options(seal_embedded_tests PRIVATE ${FFT_REQUIRED_FLAGS})
         target_link_libraries(seal_embedded_tests PRIVATE m gcc_s c ${TARGET_NAME})
+        target_link_options(seal_embedded_tests PRIVATE ${FFT_COMPAT_FLAGS})
+        target_link_libraries(seal_embedded_tests PRIVATE ${FFT_LIBRARY})
     else()
         message(WARNING "Test sources not found, skipping test executable.")
     endif()

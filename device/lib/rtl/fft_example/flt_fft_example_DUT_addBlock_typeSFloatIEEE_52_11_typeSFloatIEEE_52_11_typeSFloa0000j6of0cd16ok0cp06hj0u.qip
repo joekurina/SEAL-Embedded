@@ -1,4 +1,0 @@
-# This is the QIP file for DSP Builder for Altera FPGAs system 'flt_fft_example_DUT_addBlock_typeSFloatIEEE_52_11_typeSFloatIEEE_52_11_typeSFloa0000j6of0cd16ok0cp06hj0u'
-
-set_global_assignment -name VHDL_FILE ./rtl/fft_example/fft_example_DUT_safe_path.vhd
-set_global_assignment -name VHDL_FILE ./rtl/fft_example/flt_fft_example_DUT_addBlock_typeSFloatIEEE_52_11_typeSFloatIEEE_52_11_typeSFloa0000j6of0cd16ok0cp06hj0u.vhd

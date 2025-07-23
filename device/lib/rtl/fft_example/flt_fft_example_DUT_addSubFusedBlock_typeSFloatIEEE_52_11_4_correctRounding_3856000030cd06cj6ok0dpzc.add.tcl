@@ -1,4 +1,0 @@
-# This is the Quartus file list for 'flt_fft_example_DUT_addSubFusedBlock_typeSFloatIEEE_52_11_4_correctRounding_38560000x0ao30cd06cj6ok0dpzc'
-
-set_global_assignment -name VHDL_FILE ./rtl/fft_example/fft_example_DUT_safe_path.vhd 
-set_global_assignment -name VHDL_FILE ./rtl/fft_example/flt_fft_example_DUT_addSubFusedBlock_typeSFloatIEEE_52_11_4_correctRounding_38560000x0ao30cd06cj6ok0dpzc.vhd 

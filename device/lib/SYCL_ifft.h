@@ -2,74 +2,65 @@
 
 #include "SYCL_ckks_sym.h"
 #include "SYCL_pipes.h"
+#include "rtl/the_fft_sycl.hpp"
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
 class IFFTKernel {
-private:
-    size_t n;
-    size_t logn;
-    mutable sycl::buffer<std::complex<double>, 1> encoding_acc;
-
 public:
-    IFFTKernel( size_t n_val, size_t logn_val,
-                sycl::buffer<std::complex<double>, 1>& encoding_buf)
-        :   n(n_val), logn(logn_val), 
-            encoding_acc(encoding_buf) {}
-    
     void operator()(sycl::handler& h) const {
-        // Get access to the buffers
-        auto encoding = encoding_acc.get_access<sycl::access::mode::read_write>(h);
-
-        // Capture kernel variables
-        size_t kernel_n = n;
-        size_t kernel_logn = logn;
-        
         h.single_task([=]() [[intel::kernel_args_restrict]] {
-            // Bit-reversal function 
-            auto bitrev = [](size_t input, size_t numbits) -> size_t 
-            {
-                size_t t = (((input & 0xaaaa) >> 1) | ((input & 0x5555) << 1));
-                t        = (((t & 0xcccc) >> 2) | ((t & 0x3333) << 2));
-                t        = (((t & 0xf0f0) >> 4) | ((t & 0x0f0f) << 4));
-                t        = (((t & 0xff00) >> 8) | ((t & 0x00ff) << 8));
-                return (numbits == 0) ? 0 : (t >> (16 - numbits));
-            };
+#ifdef FPGA_EMULATOR
+            fft_example_DUT* instance = the_fft_new_instance();
+#endif
             
-            // Root calculation function
-            auto calc_root_otf = [](size_t k, size_t m) -> std::complex<double> 
-            {
-                double angle = 2.0 * M_PI * static_cast<double>(k) / static_cast<double>(m);
-                return std::complex<double>(sycl::cos(angle), sycl::sin(angle));
-            };
-            
-            // IFFT implementation 
-            size_t tt = 1, h = kernel_n / 2;
-            
-            for (size_t i = 0; i < kernel_logn; i++, tt *= 2, h /= 2) 
-            {
-                for (size_t j = 0, kstart = 0; j < h; j++, kstart += 2 * tt) 
-                {
-                    std::complex<double> s;
-                    size_t br = bitrev(h + j, kernel_logn);
-                    s = std::conj(calc_root_otf(br, kernel_n << 1));
+            [[intel::initiation_interval(1)]]
+            while (1) {
+                // Read input data from the entrance pipe
+                bool valid = false;
+                FFT_Input_Data input_data = EntranceToFFTPipe::read(valid);
+                
+                // Prepare input for the_fft function
+                the_fft_input_t input;
+                input.port_v_in_s = valid ? 1 : 0;      // Set valid flag based on pipe read
+                input.port_channel_in_s = 1;            // Channel 1
+                input.port_data_in_0re = input_data.port_data_in_0re;
+                input.port_data_in_0im = input_data.port_data_in_0im;
+                input.port_data_in_1re = input_data.port_data_in_1re;
+                input.port_data_in_1im = input_data.port_data_in_1im;
+                input.port_data_in_2re = input_data.port_data_in_2re;
+                input.port_data_in_2im = input_data.port_data_in_2im;
+                input.port_data_in_3re = input_data.port_data_in_3re;
+                input.port_data_in_3im = input_data.port_data_in_3im;
+                
+                // Call the RTL FFT function
+#ifdef FPGA_EMULATOR
+                the_fft_output_t output = the_fft(instance, input);
+#else
+                the_fft_output_t output = the_fft(input);
+#endif
+                
+                // Process output if valid
+                if (output.port_v_out_s == 1) {
+                    // Create FFT_Output_Data structure directly from RTL output
+                    FFT_Output_Data output_data;
+                    output_data.port_data_out_0re = output.port_data_out_0re;
+                    output_data.port_data_out_0im = output.port_data_out_0im;
+                    output_data.port_data_out_1re = output.port_data_out_1re;
+                    output_data.port_data_out_1im = output.port_data_out_1im;
+                    output_data.port_data_out_2re = output.port_data_out_2re;
+                    output_data.port_data_out_2im = output.port_data_out_2im;
+                    output_data.port_data_out_3re = output.port_data_out_3re;
+                    output_data.port_data_out_3im = output.port_data_out_3im;
                     
-                    for (size_t k = kstart; k < kstart + tt; k++) 
-                    {
-                        std::complex<double> u = encoding[k];
-                        std::complex<double> v = encoding[k + tt];
-                        encoding[k]      = u + v;
-                        encoding[k + tt] = (u - v) * s;
-                    }
+                    // Write the structure to the pipe
+                    IFFTToScaleAndReducePipe::write(output_data);
                 }
-            } // End of IFFT computation
-
-            // Pass the transformed values to the pipe
-            for (size_t i = 0; i < kernel_n; i++) 
-            {
-                // Write transformed encoding values to pipe
-                IFFTToScaleAndReducePipe::write(encoding[i]);
             }
+            
+#ifdef FPGA_EMULATOR
+            the_fft_delete_instance(instance);
+#endif
         }); // End of single_task
     } // End of operator()
 }; // End of IFFTKernel class

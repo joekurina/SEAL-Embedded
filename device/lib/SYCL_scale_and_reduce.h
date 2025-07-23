@@ -40,15 +40,48 @@ public:
 
         h.single_task([=]() [[intel::kernel_args_restrict]] 
         {
-            // --- Local array to buffer pipe data ---
+            // --- Local array to collect all complex values from IFFT ---
             std::complex<double> local_encoded_data[PIPE_CAPACITY];
 
-            // --- Processing Phase ---
+            // Bit-reversal function (same as original IFFT)
+            auto bitrev = [](size_t input, size_t numbits) -> size_t 
+            {
+                size_t t = (((input & 0xaaaa) >> 1) | ((input & 0x5555) << 1));
+                t        = (((t & 0xcccc) >> 2) | ((t & 0x3333) << 2));
+                t        = (((t & 0xf0f0) >> 4) | ((t & 0x0f0f) << 4));
+                t        = (((t & 0xff00) >> 8) | ((t & 0x00ff) << 8));
+                return (numbits == 0) ? 0 : (t >> (16 - numbits));
+            };
+            
+            size_t kernel_logn = 0;
+            size_t temp_n = kernel_n;
+            while (temp_n > 1) {
+                temp_n >>= 1;
+                kernel_logn++;
+            }
+
+            // --- Collection Phase: Read FFT_Output_Data structures and extract complex values ---
+            size_t num_chunks = kernel_n / 4;
+            size_t data_index = 0;
+            
+            for (size_t chunk = 0; chunk < num_chunks; chunk++) {
+                FFT_Output_Data output_data = IFFTToScaleAndReducePipe::read();
+                
+                // Extract 4 complex values from the structure in sequential order
+                local_encoded_data[data_index++] = std::complex<double>(output_data.port_data_out_0re, output_data.port_data_out_0im);
+                local_encoded_data[data_index++] = std::complex<double>(output_data.port_data_out_1re, output_data.port_data_out_1im);
+                local_encoded_data[data_index++] = std::complex<double>(output_data.port_data_out_2re, output_data.port_data_out_2im);
+                local_encoded_data[data_index++] = std::complex<double>(output_data.port_data_out_3re, output_data.port_data_out_3im);
+            }
+
+            // --- Processing Phase: Perform scaling and modular reduction ---
+            // Original scaling factor, but compensate for RTL FFT's internal 1/N scaling
             double n_inv = kernel_scale / static_cast<double>(kernel_n);
 
             for (size_t i = 0; i < kernel_n; i++) {
-                std::complex<double> encoded_value = IFFTToScaleAndReducePipe::read(); 
+                std::complex<double> encoded_value = local_encoded_data[i]; 
 
+                // Back to original scaling approach
                 double real_val = encoded_value.real();
                 double scaled = sycl::round(real_val * n_inv);
                 int64_t int_val = static_cast<int64_t>(scaled);

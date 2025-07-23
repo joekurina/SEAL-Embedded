@@ -1,4 +1,0 @@
-# This is the Quartus file list for 'flt_fft_example_DUT_castBlock_typeSFloatIEEE_52_11_typeSFloatIEEE_52_11_castMode0000226123642i229742iyc5'
-
-set_global_assignment -name VHDL_FILE ./rtl/fft_example/fft_example_DUT_safe_path.vhd 
-set_global_assignment -name VHDL_FILE ./rtl/fft_example/flt_fft_example_DUT_castBlock_typeSFloatIEEE_52_11_typeSFloatIEEE_52_11_castMode0000226123642i229742iyc5.vhd 
