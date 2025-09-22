@@ -121,8 +121,7 @@ extern "C" void SYCL_combined_encrypt(
     buffer<uint32_t, 1> ntt_pte_buf(ntt_pte, range(n));
 
     // Main working buffer for ciphertext component c0.
-    // Initialized with expanded_s, Read/Written by NTTKernel_2, Read/Written by PolyMultNegNTTKernel,
-    // Read/Written by PolyAddModKernel. Contains final c0 result at the end.
+    // Written by PolyAddModKernel. Contains final c0 result at the end.
     buffer<uint32_t, 1> c0_s_buf(c0_s, range(n));
 
     // Input buffer holding the uniform polynomial 'a' (ciphertext component c1).
@@ -183,27 +182,44 @@ void pipeline(
     buffer<uint32_t, 1>& c1_buf,                    // Input buffer: Uniform polynomial 'a' (ciphertext component c1). Read by PolyMultNeg.
     buffer<uint32_t, 1>& s_save_buf                 // Output buffer: Destination for saving the NTT(s) state from NTTKernel_2 if requested.
 ) {
+    sycl::event final_event;
+
+    // Create separate buffer for secret key input to avoid dependency conflict
+    // This buffer reads the same host memory as c0_s_buf but is seen as separate by SYCL
+    buffer<uint32_t, 1> secret_key_input_buf(c0_s_buf.get_range());
+    {
+        auto host_acc = c0_s_buf.get_host_access();
+        auto secret_acc = secret_key_input_buf.get_host_access();
+        std::copy(host_acc.begin(), host_acc.end(), secret_acc.begin());
+    }
+
     try {
 
         // Submit consumers first to avoid pipe deadlocks
         // RTL NTT A Output: reads from NTTAOutputPipe, writes to NTTToPolyMultNegPipe
         q.submit([&](handler &h) {
-            RTLNTTKernel_A_Output kernel(n)(h);
+            RTLNTTKernel_A_Output kernel(n);
+            kernel(h);
         });
+
+        // RTL NTT A Main: reads from NTTAInputPipe, writes to NTTAOutputPipe
+        std::cout << "[HOST] About to submit RTLNTTKernel_A (infinite loop)" << std::endl;
+        q.submit([&](handler &h) {
+            RTLNTTKernel_A kernel(mod_value);
+            kernel(h);
+        });
+        std::cout << "[HOST] RTLNTTKernel_A submitted" << std::endl;
+
+        // Submit RTL NTT A Input: reads from secret_key_input_buf, writes to NTTAInputPipe
+        std::cout << "[HOST] About to submit RTLNTTKernel_A_Input" << std::endl;
+        q.submit([&](handler &h) {
+            RTLNTTKernel_A_Input(n, mod_value, secret_key_input_buf, s_save_buf)(h);
+        });
+        std::cout << "[HOST] RTLNTTKernel_A_Input submitted" << std::endl;
 
         // Submit PolyMultNegNTTKernel (reads from NTTToPolyMultNegPipe)
         q.submit([&](handler &h) {
             PolyMultNegNTTKernel(n, mod_value, const_ratio, c1_buf)(h);
-        });
-
-        // Submit RTL NTT B Output: reads from NTTBOutputPipe, writes to NTTToAddModPipe and ntt_pte_buf
-        q.submit([&](handler &h) {
-            RTLNTTKernel_B_Output kernel(n, ntt_pte_buf)(h);
-        });
-
-        // PolyAddModKernel reads from pipes written by PolyMultNeg and RTL B output
-        q.submit([&](handler &h) {
-            PolyAddModKernel(n, mod_value, c0_s_buf)(h);
         });
 
         // Submit IFFTKernel (writes to pipes read by ScaleAndReduce)
@@ -211,19 +227,23 @@ void pipeline(
             IFFTKernel(n, logn, encoding_buf)(h);
         });
 
-        // Submit RTL NTT A Input: reads from c0_s_buf, writes to NTTAInputPipe
-        q.submit([&](handler &h) {
-            RTLNTTKernel_A_Input(n, mod_value, c0_s_buf, s_save_buf)(h);
-        });
-
-        // RTL NTT A Main: reads from NTTAInputPipe, writes to NTTAOutputPipe
-        q.submit([&](handler &h) {
-            RTLNTTKernel_A kernel(mod_value)(h);
-        });
-
         // ScaleAndReduceKernel reads from IFFT pipes and writes to ScaleReduceToNTTBPipe
+        std::cout << "[HOST] About to submit ScaleAndReduceKernel" << std::endl;
         q.submit([&](handler &h) {
             ScaleAndReduceKernel(n, scale, mod_value, const_ratio, error_samples_buf)(h);
+        });
+        std::cout << "[HOST] ScaleAndReduceKernel submitted" << std::endl;
+
+        // Submit RTL NTT B Output: reads from NTTBOutputPipe, writes to NTTToAddModPipe and ntt_pte_buf
+        q.submit([&](handler &h) {
+            RTLNTTKernel_B_Output kernel(n, ntt_pte_buf);
+            kernel(h);
+        });
+
+        // RTL NTT B Main: reads from NTTBInputPipe, writes to NTTBOutputPipe
+        q.submit([&](handler &h) {
+            RTLNTTKernel_B kernel(mod_value);
+            kernel(h);
         });
 
         // Submit RTL NTT B Input: reads from ScaleReduceToNTTBPipe, writes to NTTBInputPipe
@@ -231,9 +251,9 @@ void pipeline(
             RTLNTTKernel_B_Input(n, mod_value)(h);
         });
 
-        // RTL NTT B Main: reads from NTTBInputPipe, writes to NTTBOutputPipe
-        q.submit([&](handler &h) {
-            RTLNTTKernel_B kernel(mod_value)(h);
+        // PolyAddModKernel reads from pipes written by PolyMultNeg and RTL B output - this is the final kernel
+        final_event = q.submit([&](handler &h) {
+            PolyAddModKernel(n, mod_value, c0_s_buf)(h);
         });
 
     } catch (std::exception const &e) { // Catch other standard exceptions
@@ -243,8 +263,8 @@ void pipeline(
         std::exit(1);
     }
 
-    // Wait for all kernels to complete
-    q.wait();
+    // Wait only for the final kernel to complete (not the infinite-loop RTL kernels)
+    final_event.wait();
 
 } // End of pipeline function
 

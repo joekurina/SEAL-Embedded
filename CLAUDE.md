@@ -177,10 +177,47 @@ q.submit([&](handler &h) { RTLNTTKernel_B_Output(n, ntt_pte_buf)(h); });
 - **Data Conversion**: Efficient packing/unpacking between uint32_t arrays and RTL 4-element structs
 - **Automatic Modulus Selection**: Runtime mapping of SEAL-Embedded modulus values to RTL selectors
 
+### RTL Kernel Implementation Details
+
+The RTL kernels follow the verified-correct infinite loop pattern from `RTL_EXAMPLE/main.cpp`:
+
+**Main RTL Kernels (`RTLNTTKernel_A`, `RTLNTTKernel_B`):**
+- Use `while(1)` infinite loops for continuous processing
+- Non-blocking pipe reads with validity checking (`read(input_valid)`)
+- Process data only when `input_valid` is true
+- This matches the proven pattern in `RTL_EXAMPLE/main.cpp`
+
+**Input/Output Kernels:**
+- Input kernels use finite loops to feed data into RTL pipeline
+- Output kernels use finite loops with blocking reads to consume all RTL output
+- Pipeline synchronization ensures proper data flow termination
+
+**Kernel Launching Pattern:**
+```cpp
+// Create kernel object explicitly, then call operator()
+q.submit([&](handler &h) {
+    RTLNTTKernel_A kernel(mod_value);
+    kernel(h);
+});
+```
+
+**Event Handling:**
+- Wait only on final completion event (`final_event.wait()`)
+- Do NOT wait on infinite-loop RTL kernels (`q.wait()` would hang)
+- Matches RTL_EXAMPLE pattern of waiting only on output completion
+
 ### Testing and Validation
 
 To validate the RTL integration:
 1. Build with `cmake --build build -j` (requires Intel oneAPI environment)
 2. Run tests with `./build/bin/seal_embedded_tests`
-3. Verify mathematical correctness matches software implementation
-4. Generate FPGA reports with `cmake --build build --target fpga_report_file`
+3. Debug prints show kernel execution flow using `sycl::ext::oneapi::experimental::printf()`
+4. Verify mathematical correctness matches software implementation
+5. Generate FPGA reports with `cmake --build build --target fpga_report_file`
+
+### Debugging RTL Kernels
+
+Debug prints are added to trace data flow:
+- `RTLNTTKernel_A_Input`: Shows start, first/last struct processing, completion
+- `RTLNTTKernel_A`: Shows infinite loop start, first valid input, progress tracking
+- `RTLNTTKernel_A_Output`: Shows start, first/last struct reads, completion

@@ -39,6 +39,8 @@ public:
         bool save_output = (save_acc.get_range() == sycl::range(kernel_n));
 
         h.single_task([=]() [[intel::kernel_args_restrict]] {
+            sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Input: Starting, n=%zu\n", kernel_n);
+
             // Get RTL modulus selector for this modulus value
             uint8_t rtl_modulus_selector = get_rtl_modulus_selector(kernel_mod_val);
 
@@ -47,6 +49,9 @@ public:
 
             // Process data in chunks of 4 elements
             for (size_t i = 0; i < num_structs; ++i) {
+                if (i == 0) {
+                    sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Input: Processing first struct\n");
+                }
                 // Read 4 consecutive elements from input buffer
                 uint32_t elem_0 = data[i * 4 + 0];
                 uint32_t elem_1 = data[i * 4 + 1];
@@ -70,7 +75,12 @@ public:
                     s_save[i * 4 + 2] = elem_2;
                     s_save[i * 4 + 3] = elem_3;
                 }
+
+                if (i == num_structs - 1) {
+                    sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Input: Processed last struct %zu\n", i);
+                }
             }
+            sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Input: Completed, wrote %zu structs\n", num_structs);
         }); // End single_task lambda
     } // End operator()
 }; // End RTLNTTKernel_A_Input class

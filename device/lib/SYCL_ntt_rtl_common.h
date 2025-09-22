@@ -63,7 +63,6 @@ using NTTBOutputPipe = sycl::ext::intel::pipe<NTTBOutputPipeName, NTT_RTL_Output
 // - NTT B output connects to existing NTTToAddModPipe
 
 // Utility function to map SEAL-Embedded modulus values to RTL modulus selector
-// Based on the modulus mapping specified in CLAUDE.md
 inline uint8_t get_rtl_modulus_selector(uint32_t mod_value) {
     switch(mod_value) {
         case 134012929u:  return 0;  // root = 7470
