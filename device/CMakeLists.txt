@@ -12,8 +12,8 @@ set(FPGA_DEVICE "Agilex7")
 set(TARGET_NAME sealembedded)
 set(REPORT_ARTIFACT_NAME ${TARGET_NAME}_report_artifact)
 
-set(BASE_C_FLAGS "-std=c99 -Rno-debug-disables-optimization")
-set(BASE_CXX_FLAGS "-fsycl -std=c++17 -Rno-debug-disables-optimization")
+set(BASE_C_FLAGS "-std=c99 -Rno-debug-disables-optimization -qactypes")
+set(BASE_CXX_FLAGS "-fsycl -std=c++17 -Rno-debug-disables-optimization -DCSL_USE_GMP -DCSL_SYCL -Wno-return-type-c-linkage -qactypes")
 
 # --- Report-specific Flags ---
 set(REPORT_COMPILE_FLAGS "-fintelfpga")
@@ -45,6 +45,9 @@ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS} ${EMULATOR_COMPILE_FLAGS}")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS} ${EMULATOR_COMPILE_FLAGS}")
 set(CMAKE_CXX_FLAGS_REPORT "${CMAKE_CXX_FLAGS} ${REPORT_COMPILE_FLAGS} -DFPGA_HARDWARE")
 set(CMAKE_EXE_LINKER_FLAGS_REPORT "${REPORT_LINK_FLAGS}")
+
+# Force -O0 when linking with RTL library to avoid optimization conflicts
+set(CMAKE_EXE_LINKER_FLAGS "-O0")
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   include(CheckCXXCompilerFlag)
@@ -94,7 +97,12 @@ add_library(${TARGET_NAME} STATIC ${SE_LIB_SOURCE_FILES})
 target_include_directories(${TARGET_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/lib>)
 target_include_directories(${TARGET_NAME} PUBLIC ${SE_ADAPTER_FILE_OUTPUT_DIR})
+# Add RTL include directory
+target_include_directories(${TARGET_NAME} PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/lib/rtl>)
 target_link_libraries(${TARGET_NAME} PRIVATE m)
+# Link RTL static library
+target_link_libraries(${TARGET_NAME} PRIVATE ${CMAKE_CURRENT_LIST_DIR}/lib/rtl/the_nwc_4k_ntt.a)
 
 if(NOT DEFINED SEAL_EMBEDDED_VERSION)
   set(SEAL_EMBEDDED_VERSION "1.1.0")
@@ -106,6 +114,8 @@ if(SE_BUILD_TYPE STREQUAL "Tests")
     if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/main.c")
         add_executable(seal_embedded_tests ${SE_TESTS_SOURCE_FILES})
         target_link_libraries(seal_embedded_tests PRIVATE m gcc_s c ${TARGET_NAME})
+        # Link RTL static library to tests
+        target_link_libraries(seal_embedded_tests PRIVATE ${CMAKE_CURRENT_LIST_DIR}/lib/rtl/the_nwc_4k_ntt.a)
     else()
         message(WARNING "Test sources not found, skipping test executable.")
     endif()

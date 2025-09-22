@@ -25,7 +25,7 @@
 void SYCL_test_ckks_sym_base(size_t n, size_t nprimes, bool test_message)
 {
     Parms parms;
-    parms.sample_s      = false;
+    parms.sample_s      = false; 
     parms.is_asymmetric = false;
     parms.small_s       = true;
     bool encode_only    = false; 

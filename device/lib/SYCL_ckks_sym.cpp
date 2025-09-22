@@ -13,6 +13,14 @@
 #include "SYCL_poly_add.h"
 #include "SYCL_scale_and_reduce.h"
 
+// Include RTL NTT kernel headers
+#include "SYCL_RTL_ntt_a_input.h"
+#include "SYCL_RTL_ntt_a.h"
+#include "SYCL_RTL_ntt_a_output.h"
+#include "SYCL_RTL_ntt_b_input.h"
+#include "SYCL_RTL_ntt_b.h"
+#include "SYCL_RTL_ntt_b_output.h"
+
 #include <iostream>
 #include <vector>
 
@@ -22,6 +30,12 @@ using namespace sycl;
 class IFFTKernel;
 class NTTKernel_A;
 class NTTKernel_B;
+class RTLNTTKernel_A_Input;
+class RTLNTTKernel_A;
+class RTLNTTKernel_A_Output;
+class RTLNTTKernel_B_Input;
+class RTLNTTKernel_B;
+class RTLNTTKernel_B_Output;
 class PolyMultNegNTTKernel;
 class PolyAddModKernel;
 class ScaleAndReduceKernel;
@@ -171,34 +185,55 @@ void pipeline(
 ) {
     try {
 
-        // Submit IFFTKernel
+        // Submit consumers first to avoid pipe deadlocks
+        // RTL NTT A Output: reads from NTTAOutputPipe, writes to NTTToPolyMultNegPipe
         q.submit([&](handler &h) {
-            IFFTKernel(n, logn, encoding_buf)(h);
+            RTLNTTKernel_A_Output kernel(n)(h);
         });
 
-        // Submit NTTKernel_2 (Operates on c0_s_buf AND writes to s_save_buf)
-        q.submit([&](handler &h) {
-            NTTKernel_A(n, logn, mod_value, root, const_ratio, c0_s_buf, s_save_buf)(h);
-        });
-
-        // ScaleAndReduceKernel reads from IFFT pipes and writes to ScaleReduceToNTT1Pipe
-        q.submit([&](handler &h) {
-            ScaleAndReduceKernel(n, scale, mod_value, const_ratio, error_samples_buf)(h);
-        });
-
-        // NTTKernel_1 reads from ScaleReduceToNTT1Pipe and writes its result to ntt_pte_buf.
-        q.submit([&](handler &h) {
-            NTTKernel_B(n, logn, mod_value, root, const_ratio, ntt_pte_buf)(h);
-        });
-
-        // Submit PolyMultNegNTTKernel
+        // Submit PolyMultNegNTTKernel (reads from NTTToPolyMultNegPipe)
         q.submit([&](handler &h) {
             PolyMultNegNTTKernel(n, mod_value, const_ratio, c1_buf)(h);
         });
 
-        // PolyAddModKernel reads from c0_s_buf and ntt_pte_buf.
+        // Submit RTL NTT B Output: reads from NTTBOutputPipe, writes to NTTToAddModPipe and ntt_pte_buf
+        q.submit([&](handler &h) {
+            RTLNTTKernel_B_Output kernel(n, ntt_pte_buf)(h);
+        });
+
+        // PolyAddModKernel reads from pipes written by PolyMultNeg and RTL B output
         q.submit([&](handler &h) {
             PolyAddModKernel(n, mod_value, c0_s_buf)(h);
+        });
+
+        // Submit IFFTKernel (writes to pipes read by ScaleAndReduce)
+        q.submit([&](handler &h) {
+            IFFTKernel(n, logn, encoding_buf)(h);
+        });
+
+        // Submit RTL NTT A Input: reads from c0_s_buf, writes to NTTAInputPipe
+        q.submit([&](handler &h) {
+            RTLNTTKernel_A_Input(n, mod_value, c0_s_buf, s_save_buf)(h);
+        });
+
+        // RTL NTT A Main: reads from NTTAInputPipe, writes to NTTAOutputPipe
+        q.submit([&](handler &h) {
+            RTLNTTKernel_A kernel(mod_value)(h);
+        });
+
+        // ScaleAndReduceKernel reads from IFFT pipes and writes to ScaleReduceToNTTBPipe
+        q.submit([&](handler &h) {
+            ScaleAndReduceKernel(n, scale, mod_value, const_ratio, error_samples_buf)(h);
+        });
+
+        // Submit RTL NTT B Input: reads from ScaleReduceToNTTBPipe, writes to NTTBInputPipe
+        q.submit([&](handler &h) {
+            RTLNTTKernel_B_Input(n, mod_value)(h);
+        });
+
+        // RTL NTT B Main: reads from NTTBInputPipe, writes to NTTBOutputPipe
+        q.submit([&](handler &h) {
+            RTLNTTKernel_B kernel(mod_value)(h);
         });
 
     } catch (std::exception const &e) { // Catch other standard exceptions
@@ -207,6 +242,9 @@ void pipeline(
                   << e.what() << std::endl;
         std::exit(1);
     }
+
+    // Wait for all kernels to complete
+    q.wait();
 
 } // End of pipeline function
 
