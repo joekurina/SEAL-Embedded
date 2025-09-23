@@ -9,8 +9,6 @@
 #include <cstdlib>
 
 // RTL NTT B Main Kernel
-// This kernel calls the actual RTL NTT implementation for the second NTT stage
-// It reads from NTT B input pipe and writes to NTT B output pipe
 class RTLNTTKernel_B {
 private:
     uint32_t mod_value;  // Modulus value for RTL selector
@@ -31,12 +29,14 @@ public:
 
             // Get RTL modulus selector for this modulus value
             uint8_t rtl_modulus_selector = get_rtl_modulus_selector(kernel_mod_val);
+            sycl::ext::oneapi::experimental::printf("RTLNTTKernel_B: Using modulus selector %u for mod value %u\n",
+                                                    rtl_modulus_selector, kernel_mod_val);
 
             // Calculate number of structs to process (4K points = 1024 structs)
             size_t num_structs = NTT_RTL_CAPACITY;
             size_t processed_count = 0;
 
-            // Process data structures through the RTL using infinite loop pattern
+            // Process data structures through the RTL
             [[intel::initiation_interval(1)]]
             while (1) {
                 // Read from input pipe (non-blocking)

@@ -213,7 +213,7 @@ void pipeline(
         // Submit RTL NTT A Input: reads from secret_key_input_buf, writes to NTTAInputPipe
         std::cout << "[HOST] About to submit RTLNTTKernel_A_Input" << std::endl;
         q.submit([&](handler &h) {
-            RTLNTTKernel_A_Input(n, mod_value, c0_s_buf)(h);
+            RTLNTTKernel_A_Input(n, c0_s_buf)(h);
         });
         std::cout << "[HOST] RTLNTTKernel_A_Input submitted" << std::endl;
 
@@ -248,7 +248,8 @@ void pipeline(
 
         // Submit RTL NTT B Input: reads from ScaleReduceToNTTBPipe, writes to NTTBInputPipe
         q.submit([&](handler &h) {
-            RTLNTTKernel_B_Input(n, mod_value)(h);
+            RTLNTTKernel_B_Input kernel(n);
+            kernel(h);
         });
 
         // PolyAddModKernel reads from pipes written by PolyMultNeg and RTL B output - this is the final kernel

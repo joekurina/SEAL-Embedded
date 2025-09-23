@@ -9,8 +9,6 @@
 #include <cstdlib>
 
 // RTL NTT A Main Kernel
-// This kernel calls the actual RTL NTT implementation
-// It reads from NTT A input pipe and writes to NTT A output pipe
 class RTLNTTKernel_A {
 private:
     uint32_t mod_value;  // Modulus value for RTL selector
@@ -31,12 +29,14 @@ public:
 
             // Get RTL modulus selector for this modulus value
             uint8_t rtl_modulus_selector = get_rtl_modulus_selector(kernel_mod_val);
+            sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A: Using modulus selector %u for mod value %u\n",
+                                                    rtl_modulus_selector, kernel_mod_val);
 
             // Calculate number of structs to process (4K points = 1024 structs)
             size_t num_structs = NTT_RTL_CAPACITY;
             size_t processed_count = 0;
 
-            // Process data structures through the RTL using infinite loop pattern
+            // Process data structures through the RTL
             [[intel::initiation_interval(1)]]
             while (1) {
                 // Read from input pipe (non-blocking)
@@ -50,7 +50,7 @@ public:
                     processed_count++;
                 }
 
-                // Prepare RTL input structure (always, following RTL_EXAMPLE pattern)
+                // Prepare RTL input structure
                 the_nwc_4k_ntt_input_t rtl_input;
                 rtl_input.port_in_v_s = input_valid;  // Set valid flag based on pipe read
                 rtl_input.port_in_c_s = rtl_modulus_selector;  // Modulus selector
@@ -59,7 +59,7 @@ public:
                 rtl_input.port_x_in_2 = pipe_input.port_x_in_2;
                 rtl_input.port_x_in_3 = pipe_input.port_x_in_3;
 
-                // Call RTL function every iteration (following RTL_EXAMPLE pattern)
+                // Call RTL function every iteration
 #ifdef FPGA_EMULATOR
                 the_nwc_4k_ntt_output_t rtl_output = the_nwc_4k_ntt(instance, rtl_input);
 #else

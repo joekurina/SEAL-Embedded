@@ -9,27 +9,19 @@
 #include <cstdlib>
 
 // RTL NTT B Input Kernel
-// This kernel prepares data for the RTL NTT B transform
-// It reads from the existing ScaleReduceToNTTBPipe and writes to NTT B input pipe
 class RTLNTTKernel_B_Input {
 private:
     size_t n;             // Number of elements to process
-    uint32_t mod_value;   // Modulus value for RTL selector
 
 public:
-    RTLNTTKernel_B_Input(size_t n_val, uint32_t mod_val)
-        : n(n_val), mod_value(mod_val) {}
+    RTLNTTKernel_B_Input(size_t n_val) : n(n_val) {}
 
     void operator()(sycl::handler& h) const {
-        // Capture necessary variables for the kernel lambda
+        // Capture necessary variables
         size_t kernel_n = n;
-        uint32_t kernel_mod_val = mod_value;
 
         h.single_task([=]() [[intel::kernel_args_restrict]] {
             sycl::ext::oneapi::experimental::printf("RTLNTTKernel_B_Input: Starting, n=%zu\n", kernel_n);
-
-            // Get RTL modulus selector for this modulus value
-            uint8_t rtl_modulus_selector = get_rtl_modulus_selector(kernel_mod_val);
 
             // Calculate number of structs needed (4 elements per struct)
             size_t num_structs = kernel_n / 4;

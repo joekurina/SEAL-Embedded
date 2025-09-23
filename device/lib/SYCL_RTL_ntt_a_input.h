@@ -8,37 +8,26 @@
 #include <cstdlib>
 
 // RTL NTT A Input Kernel
-// This kernel prepares data for the RTL NTT A transform
-// It reads from the input buffer, converts data format, and writes to NTT A input pipe
 class RTLNTTKernel_A_Input {
 private:
     size_t n;                                      // Number of elements to process
-    uint32_t mod_value;                           // Modulus value for RTL selector
     mutable sycl::buffer<uint32_t, 1> vec_acc;    // Input buffer (secret key data)
 
 public:
     // Constructor accepting input and save buffers
-    RTLNTTKernel_A_Input(size_t n_val, uint32_t mod_val,
+    RTLNTTKernel_A_Input(size_t n_val,
                          sycl::buffer<uint32_t, 1>& vec_buf)  // Input (secret key data)
-        : n(n_val), mod_value(mod_val),
-          vec_acc(vec_buf) {}
+        : n(n_val), vec_acc(vec_buf) {}
 
     void operator()(sycl::handler& h) const {
         // Accessor for input buffer (read only)
         auto data = vec_acc.get_access<sycl::access::mode::read>(h);
 
-        // Capture necessary variables for the kernel lambda
+        // Capture necessary variables
         size_t kernel_n = n;
-        uint32_t kernel_mod_val = mod_value;
-
-        // Perform host-side check if save buffer is valid
-        //bool save_output = (save_acc.get_range() == sycl::range(kernel_n));
 
         h.single_task([=]() [[intel::kernel_args_restrict]] {
             sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Input: Starting, n=%zu\n", kernel_n);
-
-            // Get RTL modulus selector for this modulus value
-            uint8_t rtl_modulus_selector = get_rtl_modulus_selector(kernel_mod_val);
 
             // Calculate number of structs needed (4 elements per struct)
             size_t num_structs = kernel_n / 4;

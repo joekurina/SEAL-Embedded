@@ -9,8 +9,6 @@
 #include <cstdlib>
 
 // RTL NTT B Output Kernel
-// This kernel processes RTL NTT B output and connects to the existing pipeline
-// It reads from NTT B output pipe and writes to the existing NTTToAddModPipe
 class RTLNTTKernel_B_Output {
 private:
     size_t n;                                     // Number of elements to process
@@ -24,7 +22,7 @@ public:
         // Get write access to the result buffer
         auto out_data_accessor = result_acc.get_access<sycl::access::mode::write>(h);
 
-        // Capture necessary variables for the kernel lambda
+        // Capture necessary variables for the kernel
         size_t kernel_n = n;
 
         h.single_task([=]() [[intel::kernel_args_restrict]] {
@@ -43,7 +41,6 @@ public:
                 uint32_t elem_3 = static_cast<uint32_t>(rtl_output.port_out_q_3);
 
                 // Write each element to the existing NTTToAddModPipe
-                // This maintains compatibility with the rest of the pipeline
                 NTTToAddModPipe::write(elem_0);
                 NTTToAddModPipe::write(elem_1);
                 NTTToAddModPipe::write(elem_2);
