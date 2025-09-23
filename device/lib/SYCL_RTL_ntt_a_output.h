@@ -30,7 +30,7 @@ public:
         //bool save_output = (save_acc.get_range() == sycl::range(kernel_n));
 
         h.single_task([=]() [[intel::kernel_args_restrict]] {
-            sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Output: Starting, n=%zu\n", kernel_n);
+            //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Output: Starting, n=%zu\n", kernel_n);
 
             // Calculate number of structs to process (4K points = 1024 structs)
             size_t num_structs = kernel_n / 4;
@@ -38,7 +38,7 @@ public:
             // Process each output structure from RTL NTT A
             for (size_t i = 0; i < num_structs; ++i) {
                 if (i == 0) {
-                    sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Output: Reading first struct from RTL\n");
+                    //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Output: Reading first struct from RTL\n");
                 }
                 // Read from NTT A output pipe (blocking read)
                 NTT_RTL_Output_Data rtl_output = NTTAOutputPipe::read();
@@ -66,10 +66,10 @@ public:
                 //}
 
                 if (i == num_structs - 1) {
-                    sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Output: Processed last struct %zu\n", i);
+                    //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Output: Processed last struct %zu\n", i);
                 }
             }
-            sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Output: Completed, processed %zu structs\n", num_structs);
+            //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Output: Completed, processed %zu structs\n", num_structs);
         }); // End single_task lambda
     } // End operator()
 }; // End RTLNTTKernel_A_Output class

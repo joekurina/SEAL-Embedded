@@ -203,19 +203,19 @@ void pipeline(
         });
 
         // RTL NTT A Main: reads from NTTAInputPipe, writes to NTTAOutputPipe
-        std::cout << "[HOST] About to submit RTLNTTKernel_A (infinite loop)" << std::endl;
+        //std::cout << "[HOST] About to submit RTLNTTKernel_A (infinite loop)" << std::endl;
         q.submit([&](handler &h) {
             RTLNTTKernel_A kernel(mod_value);
             kernel(h);
         });
-        std::cout << "[HOST] RTLNTTKernel_A submitted" << std::endl;
+        //std::cout << "[HOST] RTLNTTKernel_A submitted" << std::endl;
 
         // Submit RTL NTT A Input: reads from secret_key_input_buf, writes to NTTAInputPipe
-        std::cout << "[HOST] About to submit RTLNTTKernel_A_Input" << std::endl;
+        //std::cout << "[HOST] About to submit RTLNTTKernel_A_Input" << std::endl;
         q.submit([&](handler &h) {
             RTLNTTKernel_A_Input(n, c0_s_buf)(h);
         });
-        std::cout << "[HOST] RTLNTTKernel_A_Input submitted" << std::endl;
+        //std::cout << "[HOST] RTLNTTKernel_A_Input submitted" << std::endl;
 
         // Submit PolyMultNegNTTKernel (reads from NTTToPolyMultNegPipe)
         q.submit([&](handler &h) {
@@ -228,11 +228,11 @@ void pipeline(
         });
 
         // ScaleAndReduceKernel reads from IFFT pipes and writes to ScaleReduceToNTTBPipe
-        std::cout << "[HOST] About to submit ScaleAndReduceKernel" << std::endl;
+        //std::cout << "[HOST] About to submit ScaleAndReduceKernel" << std::endl;
         q.submit([&](handler &h) {
             ScaleAndReduceKernel(n, scale, mod_value, const_ratio, error_samples_buf)(h);
         });
-        std::cout << "[HOST] ScaleAndReduceKernel submitted" << std::endl;
+        //std::cout << "[HOST] ScaleAndReduceKernel submitted" << std::endl;
 
         // Submit RTL NTT B Output: reads from NTTBOutputPipe, writes to NTTToAddModPipe and ntt_pte_buf
         q.submit([&](handler &h) {
@@ -253,7 +253,7 @@ void pipeline(
         });
 
         // PolyAddModKernel reads from pipes written by PolyMultNeg and RTL B output - this is the final kernel
-        final_event = q.submit([&](handler &h) {
+        q.submit([&](handler &h) {
             PolyAddModKernel(n, mod_value, c0_s_buf)(h);
         });
 
@@ -265,7 +265,7 @@ void pipeline(
     }
 
     // Wait only for the final kernel to complete (not the infinite-loop RTL kernels)
-    final_event.wait();
+    //final_event.wait();
 
 } // End of pipeline function
 

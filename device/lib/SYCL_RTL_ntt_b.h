@@ -21,7 +21,7 @@ public:
         uint32_t kernel_mod_val = mod_value;
 
         h.single_task<RTLNTTKernel_B>([=]() [[intel::kernel_args_restrict]] {
-            sycl::ext::oneapi::experimental::printf("RTLNTTKernel_B: Starting infinite loop\n");
+            //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_B: Starting infinite loop\n");
 #ifdef FPGA_EMULATOR
             // Create RTL instance for emulator mode
             reg_test_verifyNTT_multi_DUT* instance = the_nwc_4k_ntt_new_instance();
@@ -29,8 +29,8 @@ public:
 
             // Get RTL modulus selector for this modulus value
             uint8_t rtl_modulus_selector = get_rtl_modulus_selector(kernel_mod_val);
-            sycl::ext::oneapi::experimental::printf("RTLNTTKernel_B: Using modulus selector %u for mod value %u\n",
-                                                    rtl_modulus_selector, kernel_mod_val);
+            //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_B: Using modulus selector %u for mod value %u\n",
+            //                                        rtl_modulus_selector, kernel_mod_val);
 
             // Calculate number of structs to process (4K points = 1024 structs)
             size_t num_structs = NTT_RTL_CAPACITY;
@@ -78,7 +78,7 @@ public:
                     NTTBOutputPipe::write(pipe_output);
 
                     if (processed_count == num_structs) {
-                        sycl::ext::oneapi::experimental::printf("RTLNTTKernel_B: Processed all %zu structs\n", num_structs);
+                        //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_B: Processed all %zu structs\n", num_structs);
                         processed_count++; // Increment to avoid printing again
                     }
                 }

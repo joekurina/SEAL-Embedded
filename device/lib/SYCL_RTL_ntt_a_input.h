@@ -35,7 +35,7 @@ public:
             // Process data in chunks of 4 elements
             for (size_t i = 0; i < num_structs; ++i) {
                 if (i == 0) {
-                    sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Input: Processing first struct\n");
+                    //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Input: Processing first struct\n");
                 }
                 // Read 4 consecutive elements from input buffer
                 uint32_t elem_0 = data[i * 4 + 0];
@@ -55,10 +55,10 @@ public:
 
 
                 if (i == num_structs - 1) {
-                    sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Input: Processed last struct %zu\n", i);
+                    //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Input: Processed last struct %zu\n", i);
                 }
             }
-            sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Input: Completed, wrote %zu structs\n", num_structs);
+            //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Input: Completed, wrote %zu structs\n", num_structs);
         }); // End single_task lambda
     } // End operator()
 }; // End RTLNTTKernel_A_Input class

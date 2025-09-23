@@ -21,7 +21,7 @@ public:
         size_t kernel_n = n;
 
         h.single_task([=]() [[intel::kernel_args_restrict]] {
-            sycl::ext::oneapi::experimental::printf("RTLNTTKernel_B_Input: Starting, n=%zu\n", kernel_n);
+            //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_B_Input: Starting, n=%zu\n", kernel_n);
 
             // Calculate number of structs needed (4 elements per struct)
             size_t num_structs = kernel_n / 4;
@@ -55,7 +55,7 @@ public:
                     buffer_index = 0;
                 }
             }
-            sycl::ext::oneapi::experimental::printf("RTLNTTKernel_B_Input: Completed, wrote %zu structs\n", num_structs);
+            //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_B_Input: Completed, wrote %zu structs\n", num_structs);
         }); // End single_task lambda
     } // End operator()
 }; // End RTLNTTKernel_B_Input class
