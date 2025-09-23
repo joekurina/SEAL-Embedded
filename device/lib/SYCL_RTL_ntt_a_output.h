@@ -14,13 +14,20 @@
 class RTLNTTKernel_A_Output {
 private:
     size_t n;  // Number of elements to process
+    sycl::buffer<uint32_t, 1>& save_acc;
 
 public:
-    RTLNTTKernel_A_Output(size_t n_val) : n(n_val) {}
+    RTLNTTKernel_A_Output(size_t n_val, sycl::buffer<uint32_t, 1>& save_buf) : n(n_val), save_acc(save_buf) {}
 
     void operator()(sycl::handler& h) const {
+        // Accessor for save buffer (write only)
+        auto s_save = save_acc.get_access<sycl::access::mode::write>(h);
+
         // Capture necessary variables for the kernel lambda
         size_t kernel_n = n;
+
+        // Perform host-side check if save buffer is valid
+        //bool save_output = (save_acc.get_range() == sycl::range(kernel_n));
 
         h.single_task([=]() [[intel::kernel_args_restrict]] {
             sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Output: Starting, n=%zu\n", kernel_n);
@@ -49,6 +56,14 @@ public:
                 NTTToPolyMultNegPipe::write(elem_1);
                 NTTToPolyMultNegPipe::write(elem_2);
                 NTTToPolyMultNegPipe::write(elem_3);
+
+                // Also save the elements to the buffer
+                //if (save_output) {
+                    s_save[i * 4 + 0] = elem_0;
+                    s_save[i * 4 + 1] = elem_1;
+                    s_save[i * 4 + 2] = elem_2;
+                    s_save[i * 4 + 3] = elem_3;
+                //}
 
                 if (i == num_structs - 1) {
                     sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Output: Processed last struct %zu\n", i);

@@ -186,19 +186,19 @@ void pipeline(
 
     // Create separate buffer for secret key input to avoid dependency conflict
     // This buffer reads the same host memory as c0_s_buf but is seen as separate by SYCL
-    buffer<uint32_t, 1> secret_key_input_buf(c0_s_buf.get_range());
-    {
-        auto host_acc = c0_s_buf.get_host_access();
-        auto secret_acc = secret_key_input_buf.get_host_access();
-        std::copy(host_acc.begin(), host_acc.end(), secret_acc.begin());
-    }
+    //buffer<uint32_t, 1> secret_key_input_buf(c0_s_buf.get_range());
+    //{
+        //auto host_acc = c0_s_buf.get_host_access();
+        //auto secret_acc = secret_key_input_buf.get_host_access();
+        //std::copy(host_acc.begin(), host_acc.end(), secret_acc.begin());
+    //}
 
     try {
 
         // Submit consumers first to avoid pipe deadlocks
         // RTL NTT A Output: reads from NTTAOutputPipe, writes to NTTToPolyMultNegPipe
         q.submit([&](handler &h) {
-            RTLNTTKernel_A_Output kernel(n);
+            RTLNTTKernel_A_Output kernel(n, s_save_buf);
             kernel(h);
         });
 
@@ -213,7 +213,7 @@ void pipeline(
         // Submit RTL NTT A Input: reads from secret_key_input_buf, writes to NTTAInputPipe
         std::cout << "[HOST] About to submit RTLNTTKernel_A_Input" << std::endl;
         q.submit([&](handler &h) {
-            RTLNTTKernel_A_Input(n, mod_value, secret_key_input_buf, s_save_buf)(h);
+            RTLNTTKernel_A_Input(n, mod_value, c0_s_buf)(h);
         });
         std::cout << "[HOST] RTLNTTKernel_A_Input submitted" << std::endl;
 
