@@ -45,7 +45,7 @@ public:
 
                 if (input_valid) {
                     if (processed_count == 0) {
-                        sycl::ext::oneapi::experimental::printf("RTLNTTKernel_B: Received first valid input\n");
+                        //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_B: Received first valid input\n");
                     }
                     processed_count++;
                 }

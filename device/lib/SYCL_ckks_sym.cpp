@@ -23,6 +23,7 @@
 
 #include <iostream>
 #include <vector>
+#include <fstream>
 
 using namespace sycl;
 
@@ -54,7 +55,11 @@ void pipeline(
     buffer<uint32_t, 1>& ntt_pte_buf,
     buffer<uint32_t, 1>& c0_s_buf,
     buffer<uint32_t, 1>& c1_buf,
-    buffer<uint32_t, 1>& s_save_buf
+    buffer<uint32_t, 1>& s_save_buf,
+    buffer<uint32_t, 1>& ntt_a_input_buffer,
+    buffer<uint32_t, 1>& ntt_a_output_buffer,
+    buffer<uint32_t, 1>& ntt_b_input_buffer,
+    buffer<uint32_t, 1>& ntt_b_output_buffer
 );
 // Forward declare NTT root calculation function
 uint32_t NTT_root(size_t n, uint32_t mod_val);
@@ -138,6 +143,12 @@ extern "C" void SYCL_combined_encrypt(
          s_save_buf = buffer<uint32_t, 1>(s_save, range(n));
     }
 
+    // Intermediate buffers for testing or debugging
+    buffer<uint32_t, 1> ntt_a_input_buffer{nullptr, range(n)};
+    buffer<uint32_t, 1> ntt_a_output_buffer{nullptr, range(n)};
+    buffer<uint32_t, 1> ntt_b_input_buffer{nullptr, range(n)};
+    buffer<uint32_t, 1> ntt_b_output_buffer{nullptr, range(n)};
+
     // Create queue
 #if FPGA_HARDWARE
     auto selector = ext::intel::fpga_selector_v;
@@ -160,10 +171,44 @@ extern "C" void SYCL_combined_encrypt(
         ntt_pte_buf,
         c0_s_buf,
         c1_buf,
-        s_save_buf
+        s_save_buf,
+        ntt_a_input_buffer,
+        ntt_a_output_buffer,
+        ntt_b_input_buffer,
+        ntt_b_output_buffer
     );
-
     // Results are now in c0_s and s_save host pointers (due to buffer destruction sync)
+
+    // Create text files containing the intermediate buffers for debugging
+    {
+        std::ofstream file("NTT_A_INPUT.txt");
+        auto host_acc = ntt_a_input_buffer.get_host_access(sycl::read_only);
+        for (size_t i = 0; i < n; ++i) {
+            file << host_acc[i] << std::endl;
+        }
+    }
+    {
+        std::ofstream file("NTT_A_OUTPUT.txt");
+        auto host_acc = ntt_a_output_buffer.get_host_access(sycl::read_only);
+        for (size_t i = 0; i < n; ++i) {
+            file << host_acc[i] << std::endl;
+        }
+    }
+    {
+        std::ofstream file("NTT_B_INPUT.txt");
+        auto host_acc = ntt_b_input_buffer.get_host_access(sycl::read_only);
+        for (size_t i = 0; i < n; ++i) {
+            file << host_acc[i] << std::endl;
+        }
+    }
+    {
+        std::ofstream file("NTT_B_OUTPUT.txt");
+        auto host_acc = ntt_b_output_buffer.get_host_access(sycl::read_only);
+        for (size_t i = 0; i < n; ++i) {
+            file << host_acc[i] << std::endl;
+        }
+    }
+
 }
 
 // Integrated pipeline function with modified NTTKernel_2 call
@@ -180,7 +225,11 @@ void pipeline(
     buffer<uint32_t, 1>& ntt_pte_buf,               // MODIFIED ROLE: Now primarily the OUTPUT buffer for NTTKernel_1. Holds NTT(plaintext + error).
     buffer<uint32_t, 1>& c0_s_buf,                  // Main work buffer: Input is expanded_s, intermediate results include NTT(s) and -(NTT(s)*c1), final output is ciphertext component c0.
     buffer<uint32_t, 1>& c1_buf,                    // Input buffer: Uniform polynomial 'a' (ciphertext component c1). Read by PolyMultNeg.
-    buffer<uint32_t, 1>& s_save_buf                 // Output buffer: Destination for saving the NTT(s) state from NTTKernel_2 if requested.
+    buffer<uint32_t, 1>& s_save_buf,                // Output buffer: Destination for saving the NTT(s) state from NTTKernel_2 if requested.
+    buffer<uint32_t, 1>& ntt_a_input_buffer,        // Intermediate buffer for testing/debugging: Input to RTL NTT A.
+    buffer<uint32_t, 1>& ntt_a_output_buffer,       // Intermediate buffer for testing/debugging: Output from RTL NTT A.
+    buffer<uint32_t, 1>& ntt_b_input_buffer,        // Intermediate buffer for testing/debugging: Input to RTL NTT B.
+    buffer<uint32_t, 1>& ntt_b_output_buffer        // Intermediate buffer for testing/debugging: Output from RTL NTT B.
 ) {
     sycl::event final_event;
 
@@ -198,7 +247,7 @@ void pipeline(
         // Submit consumers first to avoid pipe deadlocks
         // RTL NTT A Output: reads from NTTAOutputPipe, writes to NTTToPolyMultNegPipe
         q.submit([&](handler &h) {
-            RTLNTTKernel_A_Output kernel(n, s_save_buf);
+            RTLNTTKernel_A_Output kernel(n, s_save_buf, ntt_a_output_buffer);
             kernel(h);
         });
 
@@ -213,7 +262,7 @@ void pipeline(
         // Submit RTL NTT A Input: reads from secret_key_input_buf, writes to NTTAInputPipe
         //std::cout << "[HOST] About to submit RTLNTTKernel_A_Input" << std::endl;
         q.submit([&](handler &h) {
-            RTLNTTKernel_A_Input(n, c0_s_buf)(h);
+            RTLNTTKernel_A_Input(n, c0_s_buf, ntt_a_input_buffer)(h);
         });
         //std::cout << "[HOST] RTLNTTKernel_A_Input submitted" << std::endl;
 
@@ -236,7 +285,7 @@ void pipeline(
 
         // Submit RTL NTT B Output: reads from NTTBOutputPipe, writes to NTTToAddModPipe and ntt_pte_buf
         q.submit([&](handler &h) {
-            RTLNTTKernel_B_Output kernel(n, ntt_pte_buf);
+            RTLNTTKernel_B_Output kernel(n, ntt_pte_buf, ntt_b_output_buffer);
             kernel(h);
         });
 
@@ -248,7 +297,7 @@ void pipeline(
 
         // Submit RTL NTT B Input: reads from ScaleReduceToNTTBPipe, writes to NTTBInputPipe
         q.submit([&](handler &h) {
-            RTLNTTKernel_B_Input kernel(n);
+            RTLNTTKernel_B_Input kernel(n, ntt_b_input_buffer);
             kernel(h);
         });
 

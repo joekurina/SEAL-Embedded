@@ -15,13 +15,22 @@ class RTLNTTKernel_A_Output {
 private:
     size_t n;  // Number of elements to process
     sycl::buffer<uint32_t, 1>& save_acc;
+    sycl::buffer<uint32_t, 1>& ntt_a_output_buffer; // Intermediate buffer for testing/debugging
 
 public:
-    RTLNTTKernel_A_Output(size_t n_val, sycl::buffer<uint32_t, 1>& save_buf) : n(n_val), save_acc(save_buf) {}
+    RTLNTTKernel_A_Output(size_t n_val, 
+                          sycl::buffer<uint32_t, 1>& save_buf,
+                          sycl::buffer<uint32_t, 1>& ntt_output_buffer
+                         ) 
+                        : n(n_val), 
+                          save_acc(save_buf),
+                          ntt_a_output_buffer(ntt_output_buffer) {}
 
     void operator()(sycl::handler& h) const {
         // Accessor for save buffer (write only)
         auto s_save = save_acc.get_access<sycl::access::mode::write>(h);
+        // Accessor for intermediate buffer (write only)
+        auto ntt_a_output_acc = ntt_a_output_buffer.get_access<sycl::access::mode::write>(h);
 
         // Capture necessary variables for the kernel lambda
         size_t kernel_n = n;
@@ -57,13 +66,18 @@ public:
                 NTTToPolyMultNegPipe::write(elem_2);
                 NTTToPolyMultNegPipe::write(elem_3);
 
-                // Also save the elements to the buffer
-                //if (save_output) {
-                    s_save[i * 4 + 0] = elem_0;
-                    s_save[i * 4 + 1] = elem_1;
-                    s_save[i * 4 + 2] = elem_2;
-                    s_save[i * 4 + 3] = elem_3;
-                //}
+                // Save the elements to the S buffer
+                s_save[i * 4 + 0] = elem_0;
+                s_save[i * 4 + 1] = elem_1;
+                s_save[i * 4 + 2] = elem_2;
+                s_save[i * 4 + 3] = elem_3;
+
+                // Also write to intermediate buffer for debugging
+                ntt_a_output_acc[i * 4 + 0] = elem_0;
+                ntt_a_output_acc[i * 4 + 1] = elem_1;
+                ntt_a_output_acc[i * 4 + 2] = elem_2;
+                ntt_a_output_acc[i * 4 + 3] = elem_3;
+
 
                 if (i == num_structs - 1) {
                     //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Output: Processed last struct %zu\n", i);

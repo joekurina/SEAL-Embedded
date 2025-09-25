@@ -10,24 +10,34 @@
 // RTL NTT A Input Kernel
 class RTLNTTKernel_A_Input {
 private:
-    size_t n;                                      // Number of elements to process
-    mutable sycl::buffer<uint32_t, 1> vec_acc;    // Input buffer (secret key data)
+    size_t n;                                               // Number of elements to process
+    mutable sycl::buffer<uint32_t, 1> vec_acc;              // Input buffer (secret key data)
+    mutable sycl::buffer<uint32_t, 1> ntt_a_input_buffer;   // Intermediate buffer for testing/debugging
 
 public:
     // Constructor accepting input and save buffers
     RTLNTTKernel_A_Input(size_t n_val,
-                         sycl::buffer<uint32_t, 1>& vec_buf)  // Input (secret key data)
-        : n(n_val), vec_acc(vec_buf) {}
+                         sycl::buffer<uint32_t, 1>& vec_buf, // Input (secret key data)
+                         sycl::buffer<uint32_t, 1>& ntt_a_input_buffer // Intermediate buffer for testing/debugging
+                        )  
+        : n(n_val), vec_acc(vec_buf), ntt_a_input_buffer(ntt_a_input_buffer) {}
 
     void operator()(sycl::handler& h) const {
         // Accessor for input buffer (read only)
         auto data = vec_acc.get_access<sycl::access::mode::read>(h);
+        // Accessor for intermediate buffer (write only)
+        auto ntt_a_input_acc = ntt_a_input_buffer.get_access<sycl::access::mode::write>(h);
 
         // Capture necessary variables
         size_t kernel_n = n;
 
         h.single_task([=]() [[intel::kernel_args_restrict]] {
-            sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Input: Starting, n=%zu\n", kernel_n);
+            //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Input: Starting, n=%zu\n", kernel_n);
+
+            // Write input data to intermediate buffer for debugging
+            for (size_t i = 0; i < kernel_n; ++i) {
+                ntt_a_input_acc[i] = data[i];
+            }
 
             // Calculate number of structs needed (4 elements per struct)
             size_t num_structs = kernel_n / 4;
@@ -52,7 +62,6 @@ public:
 
                 // Write to NTT A input pipe
                 NTTAInputPipe::write(rtl_input);
-
 
                 if (i == num_structs - 1) {
                     //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Input: Processed last struct %zu\n", i);
