@@ -3,7 +3,6 @@
 #include "SYCL_ckks_sym.h"
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
-#include "SYCL_pipes.h"
 #include <cstdio>
 #include <cstdlib>
 
@@ -16,25 +15,18 @@ private:
     const uint32_t* const_ratio;
     mutable sycl::buffer<uint32_t, 1> vec_acc;    // Input buffer
     mutable sycl::buffer<uint32_t, 1> save_acc;   // Save destination buffer
-    mutable sycl::buffer<uint32_t, 1> ntt_a_input_buffer; // Intermediate buffer for testing/debugging
-    mutable sycl::buffer<uint32_t, 1> ntt_a_output_buffer; // Intermediate buffer for testing/debugging
     
     
 public:
     // Constructor accepting both primary and save buffers
     NTTKernel_A(size_t n_val, size_t logn_val, uint32_t mod_val, uint32_t root_val,
                 const uint32_t* const_ratio_val,
-                sycl::buffer<uint32_t, 1>& vec_buf,     // Input (NTT input)
-                sycl::buffer<uint32_t, 1>& save_buf,   // Out (Save)
-                sycl::buffer<uint32_t, 1>& ntt_a_input_buffer, // Intermediate buffer for testing/debugging
-                sycl::buffer<uint32_t, 1>& ntt_a_output_buffer  // Intermediate buffer for testing/debugging
-        )
+                sycl::buffer<uint32_t, 1>& vec_buf,  // Input (NTT input)
+                sycl::buffer<uint32_t, 1>& save_buf) // Out (Save)
         : n(n_val), logn(logn_val), mod_value(mod_val), root(root_val),
             const_ratio(const_ratio_val),
             vec_acc(vec_buf),  // Initialize primary buffer member
-            save_acc(save_buf),// Initialize save buffer member
-            ntt_a_input_buffer(ntt_a_input_buffer),
-            ntt_a_output_buffer(ntt_a_output_buffer)
+            save_acc(save_buf) // Initialize save buffer member
             {}
 
     void operator()(sycl::handler& h) const {
@@ -42,10 +34,6 @@ public:
         auto data = vec_acc.get_access<sycl::access::mode::read>(h);
         // Accessor for save buffer (write only)
         auto s_save = save_acc.get_access<sycl::access::mode::write>(h);
-        // Accessor for intermediate buffer (write only)
-        auto ntt_a_input_acc = ntt_a_input_buffer.get_access<sycl::access::mode::write>(h);
-        // Accessor for intermediate buffer (write only)
-        auto ntt_a_output_acc = ntt_a_output_buffer.get_access<sycl::access::mode::write>(h);
 
         // Capture necessary variables for the kernel lambda
         size_t kernel_n = n;
@@ -54,15 +42,7 @@ public:
         uint32_t kernel_root = root;
         const uint32_t* kernel_const_ratio = const_ratio;
 
-        // Perform host-side check if save buffer is valid before launching kernel
-        bool save_output = (save_acc.get_range() == sycl::range(kernel_n));
-
         h.single_task([=]() [[intel::kernel_args_restrict]] {
-            // Copy input data to intermediate buffer for debugging
-            for (size_t i = 0; i < kernel_n; ++i) {
-                ntt_a_input_acc[i] = data[i];
-            }
-            
             size_t hsize = 1;
             size_t tt = kernel_n / 2;
             uint32_t output_data[PIPE_CAPACITY];
@@ -284,22 +264,11 @@ public:
                 } // End loop j
             } // End loop i (stages)
 
-            // Write the results to the pipe
+            // Write the results to the save buffer
             for (size_t i = 0; i < kernel_n; ++i) {
-                NTTToPolyMultNegPipe::write(output_data[i]);
+                s_save[i] = output_data[i];
             }
 
-            if (save_output) {
-                // Write the results to the save buffer
-                for (size_t i = 0; i < kernel_n; ++i) {
-                    s_save[i] = output_data[i];
-                }
-            }
-
-            // Copy output data to intermediate buffer for debugging
-            for (size_t i = 0; i < kernel_n; ++i) {
-                ntt_a_output_acc[i] = output_data[i];
-            }
         }); // End single_task lambda
     } // End operator()
 }; // End of NTTKernel_A class

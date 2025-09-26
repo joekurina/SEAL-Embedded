@@ -15,19 +15,31 @@ private:
     uint32_t mod_value;
     uint32_t root;
     const uint32_t* const_ratio;
-    mutable sycl::buffer<uint32_t, 1> result_out_acc; 
+    mutable sycl::buffer<uint32_t, 1> result_out_acc;
+    mutable sycl::buffer<uint32_t, 1> ntt_b_input_buffer; // Intermediate buffer for testing/debugging
+    mutable sycl::buffer<uint32_t, 1> ntt_b_output_buffer; // Intermediate buffer for testing/debugging 
 
 public:
     NTTKernel_B(size_t n_val, size_t logn_val, uint32_t mod_val, uint32_t root_val,
                 const uint32_t* const_ratio_val, 
-                sycl::buffer<uint32_t, 1>& result_output_buf) 
+                sycl::buffer<uint32_t, 1>& result_output_buf,
+                sycl::buffer<uint32_t, 1>& ntt_b_input_buffer, // Intermediate buffer for testing/debugging
+                sycl::buffer<uint32_t, 1>& ntt_b_output_buffer  // Intermediate buffer for testing/debugging
+               ) 
         : n(n_val), logn(logn_val), mod_value(mod_val), root(root_val),
-            const_ratio(const_ratio_val), result_out_acc(result_output_buf) {} 
+            const_ratio(const_ratio_val), result_out_acc(result_output_buf),
+            ntt_b_input_buffer(ntt_b_input_buffer),
+            ntt_b_output_buffer(ntt_b_output_buffer) {} 
     
     void operator()(sycl::handler& h) const {
         // Get write access to the output buffer
         auto out_data_accessor = result_out_acc.get_access<sycl::access::mode::write>(h); 
-        
+        // Accessor for intermediate buffer (write only)
+        auto ntt_b_input_acc = ntt_b_input_buffer.get_access<sycl::access::mode::write>(h);
+        // Accessor for intermediate buffer (write only)
+        auto ntt_b_output_acc = ntt_b_output_buffer.get_access<sycl::access::mode::write>(h);
+
+
         // Capture necessary variables
         size_t kernel_n = n;
         size_t kernel_logn = logn;
@@ -53,6 +65,11 @@ public:
                 }
             }
             
+            // Write input data to intermediate buffer for debugging
+            for (size_t i = 0; i < kernel_n; ++i) {
+                ntt_b_input_acc[i] = local_data[i];
+            }
+
             size_t hsize = 1;
             size_t tt = kernel_n / 2;
             
@@ -266,6 +283,11 @@ public:
             for(size_t i = 0; i < kernel_n; ++i)
             {
                 out_data_accessor[i] = local_data[i];
+            }
+
+            // Write output data to intermediate buffer for debugging
+            for (size_t i = 0; i < kernel_n; ++i) {
+                ntt_b_output_acc[i] = local_data[i];
             }
             
         }); // End of single_task
