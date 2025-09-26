@@ -222,6 +222,19 @@ void pipeline(
     buffer<uint32_t, 1>& ntt_b_input_buffer,
     buffer<uint32_t, 1>& ntt_b_output_buffer
 ) {
+    uint32_t const_ratio_length = sizeof(const_ratio) / sizeof(const_ratio[0]);
+    // First, print out some variables for debugging
+    std::cout << "Pipeline parameters:" << std::endl;
+    std::cout << "  n: " << n << std::endl;
+    std::cout << "  logn: " << logn << std::endl;
+    std::cout << "  scale: " << scale << std::endl;
+    std::cout << "  mod_value: " << mod_value << std::endl;
+    std::cout << "  root: " << root << std::endl;
+    // Print the const_ratio array
+    for (uint32_t i = 0; i < const_ratio_length; ++i) {
+        std::cout << "  const_ratio[" << i << "]: " << const_ratio[i] << std::endl;
+    }
+
     try {
 
         // Submit IFFTKernel
