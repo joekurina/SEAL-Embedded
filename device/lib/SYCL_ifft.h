@@ -14,8 +14,8 @@ private:
 public:
     IFFTKernel( size_t n_val, size_t logn_val,
                 sycl::buffer<std::complex<double>, 1>& encoding_buf)
-        :   n(n_val), logn(logn_val), 
-            encoding_acc(encoding_buf) {}
+            :   n(n_val), logn(logn_val), 
+                encoding_acc(encoding_buf) {}
     
     void operator()(sycl::handler& h) const {
         // Get access to the buffers
@@ -26,7 +26,6 @@ public:
         size_t kernel_logn = logn;
         
         h.single_task([=]() [[intel::kernel_args_restrict]] {
-            sycl::ext::oneapi::experimental::printf("IFFTKernel: Starting, n=%zu\n", kernel_n);
 
             // Bit-reversal function 
             auto bitrev = [](size_t input, size_t numbits) -> size_t 
@@ -67,13 +66,11 @@ public:
             } // End of IFFT computation
 
             // Pass the transformed values to the pipe
-            sycl::ext::oneapi::experimental::printf("IFFTKernel: Writing %zu values to pipe\n", kernel_n);
             for (size_t i = 0; i < kernel_n; i++)
             {
                 // Write transformed encoding values to pipe
                 IFFTToScaleAndReducePipe::write(encoding[i]);
             }
-            sycl::ext::oneapi::experimental::printf("IFFTKernel: Completed\n");
         }); // End of single_task
     } // End of operator()
 }; // End of IFFTKernel class

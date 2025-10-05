@@ -275,8 +275,12 @@ void test_ckks_asym_base(size_t n, size_t nprimes, bool test_message)
             // -- Note: sizeof(max(ntt_roots, ifft_roots)) must be passed as temp memory to undo
             //    ifft.
             bool s_test_save_small = 0;
-            check_decode_decrypt_inpl(pk_c0, pk_c1, v, vlen, ntt_s_save, s_test_save_small, pterr,
+            bool success = check_decode_decrypt_inpl(pk_c0, pk_c1, v, vlen, ntt_s_save, s_test_save_small, pterr,
                                       index_map, &parms, temp_test_mem);
+            if (!success) {
+                printf("TEST FAILED\n");
+                break;
+            }
 
             // -- Done checking this prime, now try next prime if requested
             // -- Note: This does nothing to u if u is in small form

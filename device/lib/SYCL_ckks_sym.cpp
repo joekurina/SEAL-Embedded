@@ -40,6 +40,19 @@ class PolyMultNegNTTKernel;
 class PolyAddModKernel;
 class ScaleAndReduceKernel;
 
+// Modulus selector function
+inline uint8_t get_rtl_modulus_selector(uint32_t mod_value) {
+    switch(mod_value) {
+        case 134012929:  return 0;  // root = 7470
+        case 134111233:  return 1;  // root = 3856
+        case 134176769:  return 2;  // root = 24149
+        case 1053818881: return 3;  // root = 503422
+        case 1054015489: return 4;  // root = 16768
+        case 1054212097: return 5;  // root = 7305
+        default:          return 0;  // fallback to first modulus
+    }
+}
+
 // Forward declare pipeline function
 void pipeline(
     queue q,
@@ -56,6 +69,7 @@ void pipeline(
     buffer<uint32_t, 1>& c1_buf,
     buffer<uint32_t, 1>& s_save_buf
 );
+
 // Forward declare NTT root calculation function
 uint32_t NTT_root(size_t n, uint32_t mod_val);
 
@@ -182,17 +196,8 @@ void pipeline(
     buffer<uint32_t, 1>& c1_buf,                    // Input buffer: Uniform polynomial 'a' (ciphertext component c1). Read by PolyMultNeg.
     buffer<uint32_t, 1>& s_save_buf                 // Output buffer: Destination for saving the NTT(s) state from NTTKernel_2 if requested.
 ) {
-    sycl::event final_event;
-
-    // Create separate buffer for secret key input to avoid dependency conflict
-    // This buffer reads the same host memory as c0_s_buf but is seen as separate by SYCL
-    //buffer<uint32_t, 1> secret_key_input_buf(c0_s_buf.get_range());
-    //{
-        //auto host_acc = c0_s_buf.get_host_access();
-        //auto secret_acc = secret_key_input_buf.get_host_access();
-        //std::copy(host_acc.begin(), host_acc.end(), secret_acc.begin());
-    //}
-
+    uint8_t modulus_selector = get_rtl_modulus_selector(mod_value);
+    std::cout << "[Pipeline] Using modulus selector: " << static_cast<int>(modulus_selector) << " for modulus " << mod_value << std::endl;
     try {
 
         // Submit consumers first to avoid pipe deadlocks
@@ -205,7 +210,7 @@ void pipeline(
         // RTL NTT A Main: reads from NTTAInputPipe, writes to NTTAOutputPipe
         //std::cout << "[HOST] About to submit RTLNTTKernel_A (infinite loop)" << std::endl;
         q.submit([&](handler &h) {
-            RTLNTTKernel_A kernel(mod_value);
+            RTLNTTKernel_A kernel(mod_value, modulus_selector);
             kernel(h);
         });
         //std::cout << "[HOST] RTLNTTKernel_A submitted" << std::endl;
@@ -242,7 +247,7 @@ void pipeline(
 
         // RTL NTT B Main: reads from NTTBInputPipe, writes to NTTBOutputPipe
         q.submit([&](handler &h) {
-            RTLNTTKernel_B kernel(mod_value);
+            RTLNTTKernel_B kernel(mod_value, modulus_selector);
             kernel(h);
         });
 
@@ -263,10 +268,6 @@ void pipeline(
                   << e.what() << std::endl;
         std::exit(1);
     }
-
-    // Wait only for the final kernel to complete (not the infinite-loop RTL kernels)
-    //final_event.wait();
-
 } // End of pipeline function
 
 uint32_t NTT_root(std::size_t n, uint32_t mod_val)

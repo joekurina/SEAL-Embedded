@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------- 
-// High Level Design Compiler for Altera(R) FPGAs Version 2025.2 (Release Build #8f970adab4)
-// Software model created on 2025-09-08 11:35:33
+// High Level Design Compiler for Altera(R) FPGAs Version 25.3 (Release Build #17e6417164)
+// Software model created on 2025-10-01 16:11:47
 // Generation mode: Bit Accurate
 // ------------------------------------------------------------------------- 
 #ifndef SOFTWARE_MODEL_WRAPPER_THE_NWC_4K_NTT_H_

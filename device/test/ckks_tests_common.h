@@ -142,7 +142,8 @@ elements.
 @param[in]  index_map   [Optional]. If passed in, can avoid 1 flash read
 @param[in]  parms       Parameters instance
 @param      temp	    Scratch space
+@return                 true if test passed, false if failed
 */
-void check_decode_decrypt_inpl(ZZ *c0, ZZ *c1, const flpt *values, size_t values_len, const ZZ *s,
+bool check_decode_decrypt_inpl(ZZ *c0, ZZ *c1, const flpt *values, size_t values_len, const ZZ *s,
                                bool small_s, const ZZ *pte_calc, uint16_t *index_map,
                                const Parms *parms, ZZ *temp);

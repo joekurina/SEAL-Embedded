@@ -48,16 +48,3 @@ using NTTAOutputPipe = sycl::ext::intel::pipe<NTTAOutputPipeName, NTT_RTL_Output
 // Internal NTT B Pipeline Pipes (between the 3 NTT B stages)
 using NTTBInputPipe = sycl::ext::intel::pipe<NTTBInputPipeName, NTT_RTL_Input_Data, NTT_RTL_CAPACITY>;
 using NTTBOutputPipe = sycl::ext::intel::pipe<NTTBOutputPipeName, NTT_RTL_Output_Data, NTT_RTL_CAPACITY>;
-
-// Utility function to map SEAL-Embedded modulus values to RTL modulus selector
-inline uint8_t get_rtl_modulus_selector(uint32_t mod_value) {
-    switch(mod_value) {
-        case 134012929:  return 0;  // root = 7470
-        case 134111233:  return 1;  // root = 3856
-        case 134176769:  return 2;  // root = 24149
-        case 1053818881: return 3;  // root = 503422
-        case 1054015489: return 4;  // root = 16768
-        case 1054212097: return 5;  // root = 7305
-        default:          return 0;  // fallback to first modulus
-    }
-}

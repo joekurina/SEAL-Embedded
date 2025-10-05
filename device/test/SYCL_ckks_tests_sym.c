@@ -138,6 +138,7 @@ void SYCL_test_ckks_sym_base(size_t n, size_t nprimes, bool test_message)
         prng_randomize_reset(&shareable_prng, NULL);
         prng_randomize_reset(&prng, NULL);
 
+        bool test_failed = false;
         for (size_t i = 0; i < parms.nprimes; i++)
         {
             print_zz("\n ***** Modulus", parms.curr_modulus->value);
@@ -164,12 +165,19 @@ void SYCL_test_ckks_sym_base(size_t n, size_t nprimes, bool test_message)
 
             // -- Check that decrypt gives back the pt+err and decode gives back v.
             bool s_test_save_small = false;
-            check_decode_decrypt_inpl(c0, c1_test_save, v, vlen, s_test_save, s_test_save_small,
-                                      ntt_pte, index_map, &parms, temp_test_mem);
+            bool success = check_decode_decrypt_inpl(c0, c1_test_save, v, vlen, s_test_save, s_test_save_small,
+                                              ntt_pte, index_map, &parms, temp_test_mem);
+            if (!success) {
+                test_failed = true;
+            }
 
             // -- Done checking this prime. Now try next prime if requested
             bool ret = ckks_next_prime_sym(&parms, s);
             se_assert(ret || (!ret && i + 1 == parms.nprimes));
+        }
+
+        if (test_failed) {
+            printf("TEST FAILED\n");
         }
 
         // -- Can exit now if rlwe testing only

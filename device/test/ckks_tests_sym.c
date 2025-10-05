@@ -159,8 +159,12 @@ void test_ckks_sym_base(size_t n, size_t nprimes, bool test_message)
             // -- Note: sizeof(max(ntt_roots, ifft_roots)) must be passed as temp memory
             //    to undo ifft
             bool s_test_save_small = false;
-            check_decode_decrypt_inpl(c0, c1_test_save, v, vlen, s_test_save, s_test_save_small,
+            bool success = check_decode_decrypt_inpl(c0, c1_test_save, v, vlen, s_test_save, s_test_save_small,
                                       ntt_pte, index_map, &parms, temp_test_mem);
+            if (!success) {
+                printf("TEST FAILED\n");
+                break;
+            }
 
 #ifdef SE_SK_PERSISTENT_ACROSS_PRIMES
             // -- Decoding corrupted this, so load it back

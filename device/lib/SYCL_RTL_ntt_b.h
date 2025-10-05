@@ -12,29 +12,26 @@
 class RTLNTTKernel_B {
 private:
     uint32_t mod_value;  // Modulus value for RTL selector
+    uint8_t modulus_selector;  // Modulus selector value
 
 public:
-    RTLNTTKernel_B(uint32_t mod_val) : mod_value(mod_val) {}
+    RTLNTTKernel_B(uint32_t mod_val, uint8_t mod_selector) : mod_value(mod_val), modulus_selector(mod_selector) {}
 
     void operator()(sycl::handler& h) const {
         // Capture necessary variables for the kernel lambda
         uint32_t kernel_mod_val = mod_value;
-
+        uint8_t kernel_mod_selector = modulus_selector;
         h.single_task<RTLNTTKernel_B>([=]() [[intel::kernel_args_restrict]] {
-            //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_B: Starting infinite loop\n");
 #ifdef FPGA_EMULATOR
             // Create RTL instance for emulator mode
             reg_test_verifyNTT_multi_DUT* instance = the_nwc_4k_ntt_new_instance();
 #endif
 
             // Get RTL modulus selector for this modulus value
-            uint8_t rtl_modulus_selector = get_rtl_modulus_selector(kernel_mod_val);
-            //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_B: Using modulus selector %u for mod value %u\n",
-            //                                        rtl_modulus_selector, kernel_mod_val);
+            sycl::ext::oneapi::experimental::printf("NTTKernel_B: Processing modulus selector %u\n", kernel_mod_selector);
 
             // Calculate number of structs to process (4K points = 1024 structs)
             size_t num_structs = NTT_RTL_CAPACITY;
-            size_t processed_count = 0;
 
             // Process data structures through the RTL
             [[intel::initiation_interval(1)]]
@@ -43,17 +40,10 @@ public:
                 bool input_valid = false;
                 NTT_RTL_Input_Data pipe_input = NTTBInputPipe::read(input_valid);
 
-                if (input_valid) {
-                    if (processed_count == 0) {
-                        sycl::ext::oneapi::experimental::printf("RTLNTTKernel_B: Received first valid input\n");
-                    }
-                    processed_count++;
-                }
-
                 // Prepare RTL input structure (always, following RTL_EXAMPLE pattern)
                 the_nwc_4k_ntt_input_t rtl_input;
                 rtl_input.port_in_v_s = input_valid;  // Set valid flag based on pipe read
-                rtl_input.port_in_c_s = rtl_modulus_selector;  // Modulus selector
+                rtl_input.port_in_c_s = kernel_mod_selector;  // Modulus selector
                 rtl_input.port_x_in_0 = pipe_input.port_x_in_0;
                 rtl_input.port_x_in_1 = pipe_input.port_x_in_1;
                 rtl_input.port_x_in_2 = pipe_input.port_x_in_2;
@@ -76,14 +66,8 @@ public:
 
                     // Write to output pipe
                     NTTBOutputPipe::write(pipe_output);
-
-                    if (processed_count == num_structs) {
-                        //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_B: Processed all %zu structs\n", num_structs);
-                        processed_count++; // Increment to avoid printing again
-                    }
                 }
             }
-
 #ifdef FPGA_EMULATOR
             // Clean up RTL instance for emulator mode
             the_nwc_4k_ntt_delete_instance(instance);

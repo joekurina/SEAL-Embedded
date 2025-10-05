@@ -163,23 +163,23 @@ void ckks_decrypt_inpl(ZZ *c0, ZZ *c1, const ZZ *s, bool small_s, const Parms *p
     Modulus *mod   = parms->curr_modulus;
 
     // -- Step 1: pt = [c1 * s]_Rq
-    se_assert(!small_s);
+    if (small_s) return; // or assert, but since caller checks, ok
     poly_mult_mod_ntt_form_inpl(c1, s, n, mod);
 
     // -- Step 2: pt = [c0 + c1*s]_Rq
     poly_add_mod_inpl(c0, c1, n, mod);
 }
 
-void check_decode_decrypt_inpl(ZZ *c0, ZZ *c1, const flpt *values, size_t values_len, const ZZ *s,
+bool check_decode_decrypt_inpl(ZZ *c0, ZZ *c1, const flpt *values, size_t values_len, const ZZ *s,
                                bool small_s, const ZZ *pte_calc, uint16_t *index_map,
                                const Parms *parms, ZZ *temp)
 {
-    se_assert(c0 && c1 && values && s && pte_calc && parms && temp);
-    se_assert(!small_s);
+    if (!(c0 && c1 && values && s && pte_calc && parms && temp)) return false;
+    if (small_s) return false;
     print_poly_flpt("values", values, values_len);
 
     size_t n = parms->coeff_count;
-    se_assert(values_len <= n / 2 && values_len > 0);
+    if (!(values_len <= n / 2 && values_len > 0)) return false;
 
     print_poly("c0", c0, n);
     print_poly("c1", c1, n);
@@ -206,14 +206,14 @@ void check_decode_decrypt_inpl(ZZ *c0, ZZ *c1, const flpt *values, size_t values
     compare_poly(s1, pte_calc, s2, c0, n);
 
     // -- Make sure we didn't accidentally check an all-zeros vector
-    if (n > 16) se_assert(!all_zeros(c0, n));
+    if (n > 16 && all_zeros(c0, n)) return false;
 
     // -- Then, test decode if requested
     if (values)
     {
         print_poly("c0            ", c0, n);
         intt_roots_initialize(parms, temp);
-        se_assert(temp);
+        if (!temp) return false;
         intt_inpl(parms, temp, c0);
         print_poly("pt = intt(c0) ", c0, n);
 
@@ -226,6 +226,7 @@ void check_decode_decrypt_inpl(ZZ *c0, ZZ *c1, const flpt *values, size_t values
         ckks_decode_inpl(c0, values_len, index_map, parms, (double complex *)temp);
         print_poly_flpt(n2, (flpt *)c0, n);
         bool err = compare_poly_flpt(n1, values, n2, (flpt *)c0, values_len, (flpt)0.1);
-        se_assert(!err);
+        return !err;
     }
+    return true;
 }

@@ -26,20 +26,12 @@ public:
         // Capture necessary variables for the kernel lambda
         size_t kernel_n = n;
 
-        // Perform host-side check if save buffer is valid
-        //bool save_output = (save_acc.get_range() == sycl::range(kernel_n));
-
         h.single_task([=]() [[intel::kernel_args_restrict]] {
-            //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Output: Starting, n=%zu\n", kernel_n);
-
             // Calculate number of structs to process (4K points = 1024 structs)
             size_t num_structs = kernel_n / 4;
 
             // Process each output structure from RTL NTT A
             for (size_t i = 0; i < num_structs; ++i) {
-                if (i == 0) {
-                    //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Output: Reading first struct from RTL\n");
-                }
                 // Read from NTT A output pipe (blocking read)
                 NTT_RTL_Output_Data rtl_output = NTTAOutputPipe::read();
 
@@ -57,19 +49,12 @@ public:
                 NTTToPolyMultNegPipe::write(elem_2);
                 NTTToPolyMultNegPipe::write(elem_3);
 
-                // Also save the elements to the buffer
-                //if (save_output) {
-                    s_save[i * 4 + 0] = elem_0;
-                    s_save[i * 4 + 1] = elem_1;
-                    s_save[i * 4 + 2] = elem_2;
-                    s_save[i * 4 + 3] = elem_3;
-                //}
-
-                if (i == num_structs - 1) {
-                    //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Output: Processed last struct %zu\n", i);
-                }
+                // Save the NTT(s) state to the provided buffer
+                s_save[i * 4 + 0] = elem_0;
+                s_save[i * 4 + 1] = elem_1;
+                s_save[i * 4 + 2] = elem_2;
+                s_save[i * 4 + 3] = elem_3;
             }
-            //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Output: Completed, processed %zu structs\n", num_structs);
         }); // End single_task lambda
     } // End operator()
 }; // End RTLNTTKernel_A_Output class

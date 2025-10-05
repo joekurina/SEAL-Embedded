@@ -27,16 +27,11 @@ public:
         size_t kernel_n = n;
 
         h.single_task([=]() [[intel::kernel_args_restrict]] {
-            sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Input: Starting, n=%zu\n", kernel_n);
-
             // Calculate number of structs needed (4 elements per struct)
             size_t num_structs = kernel_n / 4;
 
             // Process data in chunks of 4 elements
             for (size_t i = 0; i < num_structs; ++i) {
-                if (i == 0) {
-                    //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Input: Processing first struct\n");
-                }
                 // Read 4 consecutive elements from input buffer
                 uint32_t elem_0 = data[i * 4 + 0];
                 uint32_t elem_1 = data[i * 4 + 1];
@@ -52,13 +47,7 @@ public:
 
                 // Write to NTT A input pipe
                 NTTAInputPipe::write(rtl_input);
-
-
-                if (i == num_structs - 1) {
-                    //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Input: Processed last struct %zu\n", i);
-                }
             }
-            //sycl::ext::oneapi::experimental::printf("RTLNTTKernel_A_Input: Completed, wrote %zu structs\n", num_structs);
         }); // End single_task lambda
     } // End operator()
 }; // End RTLNTTKernel_A_Input class
