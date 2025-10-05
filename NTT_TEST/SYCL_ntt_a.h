@@ -1,9 +1,7 @@
 #pragma once
 
-#include "SYCL_ckks_sym.h"
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
-#include "SYCL_pipes.h"
 #include <cstdio>
 #include <cstdlib>
 
@@ -17,18 +15,19 @@ private:
     mutable sycl::buffer<uint32_t, 1> vec_acc;    // Input buffer
     mutable sycl::buffer<uint32_t, 1> save_acc;   // Save destination buffer
     
-    
 public:
-    // Constructor accepting both primary and save buffers
     NTTKernel_A(size_t n_val, size_t logn_val, uint32_t mod_val, uint32_t root_val,
                 const uint32_t* const_ratio_val,
                 sycl::buffer<uint32_t, 1>& vec_buf,  // Input (NTT input)
                 sycl::buffer<uint32_t, 1>& save_buf) // Out (Save)
-        : n(n_val), logn(logn_val), mod_value(mod_val), root(root_val),
-            const_ratio(const_ratio_val),
-            vec_acc(vec_buf),  // Initialize primary buffer member
-            save_acc(save_buf) // Initialize save buffer member
-            {}
+                : 
+                n(n_val), 
+                logn(logn_val), 
+                mod_value(mod_val), 
+                root(root_val),
+                const_ratio(const_ratio_val),
+                vec_acc(vec_buf),
+                save_acc(save_buf) {}
 
     void operator()(sycl::handler& h) const {
         // Accessor for primary buffer (read only)
@@ -43,13 +42,10 @@ public:
         uint32_t kernel_root = root;
         const uint32_t* kernel_const_ratio = const_ratio;
 
-        // Perform host-side check if save buffer is valid before launching kernel
-        bool save_output = (save_acc.get_range() == sycl::range(kernel_n));
-
         h.single_task([=]() [[intel::kernel_args_restrict]] {
             size_t hsize = 1;
             size_t tt = kernel_n / 2;
-            uint32_t output_data[PIPE_CAPACITY];
+            uint32_t output_data[4096];
 
             // Loop over stages
             for (size_t i = 0; i < kernel_logn; i++, hsize *= 2, tt /= 2) {
@@ -268,17 +264,10 @@ public:
                 } // End loop j
             } // End loop i (stages)
 
-            // Write the results to the pipe
             for (size_t i = 0; i < kernel_n; ++i) {
-                NTTToPolyMultNegPipe::write(output_data[i]);
+                s_save[i] = output_data[i];
             }
-
-            if (save_output) {
-                // Write the results to the save buffer
-                for (size_t i = 0; i < kernel_n; ++i) {
-                    s_save[i] = output_data[i];
-                }
-            }
+            
         }); // End single_task lambda
     } // End operator()
 }; // End of NTTKernel_A class
