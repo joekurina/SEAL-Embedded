@@ -10,14 +10,18 @@
 // RTL NTT A Input Kernel
 class RTLNTTKernel_A_Input {
 private:
-    size_t n;                                      // Number of elements to process
-    mutable sycl::buffer<uint32_t, 1> vec_acc;    // Input buffer (secret key data)
+    size_t n;                                       // Number of elements to process
+    uint8_t mod_sel;                               // Modulus selector
+    mutable sycl::buffer<uint32_t, 1> vec_acc;      // Input buffer (secret key data)
 
 public:
     // Constructor accepting input and save buffers
     RTLNTTKernel_A_Input(size_t n_val,
+                         uint8_t mod_selector,
                          sycl::buffer<uint32_t, 1>& vec_buf)  // Input (secret key data)
-        : n(n_val), vec_acc(vec_buf) {}
+                        : n(n_val),
+                          mod_sel(mod_selector), 
+                          vec_acc(vec_buf) {}
 
     void operator()(sycl::handler& h) const {
         // Accessor for input buffer (read only)
@@ -25,6 +29,7 @@ public:
 
         // Capture necessary variables
         size_t kernel_n = n;
+        uint8_t kernel_mod_sel = mod_sel;
 
         h.single_task([=]() [[intel::kernel_args_restrict]] {
             // Calculate number of structs needed (4 elements per struct)
@@ -44,7 +49,9 @@ public:
                 rtl_input.port_x_in_1 = static_cast<int32_t>(elem_1);
                 rtl_input.port_x_in_2 = static_cast<int32_t>(elem_2);
                 rtl_input.port_x_in_3 = static_cast<int32_t>(elem_3);
-
+                
+                // Write modulus selector to pipe
+                NTTAModSelectorPipe::write(kernel_mod_sel);
                 // Write to NTT A input pipe
                 NTTAInputPipe::write(rtl_input);
             }

@@ -11,25 +11,16 @@
 // RTL NTT A Main Kernel
 class RTLNTTKernel_A {
 private:
-    uint32_t mod_value;  // Modulus value for RTL selector
-    uint8_t modulus_selector;  // Modulus selector value
 
 public:
-    RTLNTTKernel_A(uint32_t mod_val, uint8_t mod_selector) : mod_value(mod_val), modulus_selector(mod_selector) {}
+    RTLNTTKernel_A() {}
 
     void operator()(sycl::handler& h) const {
-        // Capture necessary variables for the kernel lambda
-        uint32_t kernel_mod_val = mod_value;
-        uint8_t kernel_mod_selector = modulus_selector;
         h.single_task<RTLNTTKernel_A>([=]() [[intel::kernel_args_restrict]] {
 #ifdef FPGA_EMULATOR
             // Create RTL instance for emulator mode
             reg_test_verifyNTT_multi_DUT* instance = the_nwc_4k_ntt_new_instance();
 #endif
-
-            // Get RTL modulus selector for this modulus value
-            sycl::ext::oneapi::experimental::printf("NTTKernel_A: Processing modulus selector %u\n", kernel_mod_selector);
-
             // Calculate number of structs to process (4K points = 1024 structs)
             size_t num_structs = NTT_RTL_CAPACITY;
 
@@ -38,7 +29,12 @@ public:
             while (1) {
                 // Read from input pipe (non-blocking)
                 bool input_valid = false;
+                bool mod_sel_valid = false;
                 NTT_RTL_Input_Data pipe_input = NTTAInputPipe::read(input_valid);
+                uint8_t kernel_mod_selector = NTTAModSelectorPipe::read(mod_sel_valid);
+
+                // If no valid input, exit the loop
+                //if (!input_valid) break;
 
                 // Prepare RTL input structure
                 the_nwc_4k_ntt_input_t rtl_input;

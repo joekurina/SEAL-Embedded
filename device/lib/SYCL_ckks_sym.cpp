@@ -210,7 +210,7 @@ void pipeline(
         // RTL NTT A Main: reads from NTTAInputPipe, writes to NTTAOutputPipe
         //std::cout << "[HOST] About to submit RTLNTTKernel_A (infinite loop)" << std::endl;
         q.submit([&](handler &h) {
-            RTLNTTKernel_A kernel(mod_value, modulus_selector);
+            RTLNTTKernel_A kernel{};
             kernel(h);
         });
         //std::cout << "[HOST] RTLNTTKernel_A submitted" << std::endl;
@@ -218,7 +218,7 @@ void pipeline(
         // Submit RTL NTT A Input: reads from secret_key_input_buf, writes to NTTAInputPipe
         //std::cout << "[HOST] About to submit RTLNTTKernel_A_Input" << std::endl;
         q.submit([&](handler &h) {
-            RTLNTTKernel_A_Input(n, c0_s_buf)(h);
+            RTLNTTKernel_A_Input(n, modulus_selector, c0_s_buf)(h);
         });
         //std::cout << "[HOST] RTLNTTKernel_A_Input submitted" << std::endl;
 
@@ -247,13 +247,13 @@ void pipeline(
 
         // RTL NTT B Main: reads from NTTBInputPipe, writes to NTTBOutputPipe
         q.submit([&](handler &h) {
-            RTLNTTKernel_B kernel(mod_value, modulus_selector);
+            RTLNTTKernel_B kernel{};
             kernel(h);
         });
 
         // Submit RTL NTT B Input: reads from ScaleReduceToNTTBPipe, writes to NTTBInputPipe
         q.submit([&](handler &h) {
-            RTLNTTKernel_B_Input kernel(n);
+            RTLNTTKernel_B_Input kernel(n, modulus_selector);
             kernel(h);
         });
 

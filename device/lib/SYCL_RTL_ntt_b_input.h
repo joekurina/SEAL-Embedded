@@ -11,14 +11,16 @@
 // RTL NTT B Input Kernel
 class RTLNTTKernel_B_Input {
 private:
-    size_t n;             // Number of elements to process
+    size_t n;                   // Number of elements to process
+    uint8_t mod_sel;            // Modulus selector
 
 public:
-    RTLNTTKernel_B_Input(size_t n_val) : n(n_val) {}
+    RTLNTTKernel_B_Input(size_t n_val, uint8_t mod_selector) : n(n_val), mod_sel(mod_selector)  {}
 
     void operator()(sycl::handler& h) const {
         // Capture necessary variables
         size_t kernel_n = n;
+        uint8_t kernel_mod_sel = mod_sel;
 
         h.single_task([=]() [[intel::kernel_args_restrict]] {
             // Calculate number of structs needed (4 elements per struct)
@@ -46,6 +48,8 @@ public:
                     rtl_input.port_x_in_2 = static_cast<int32_t>(element_buffer[2]);
                     rtl_input.port_x_in_3 = static_cast<int32_t>(element_buffer[3]);
 
+                    // Write modulus selector to pipe
+                    NTTBModSelectorPipe::write(kernel_mod_sel);
                     // Write to NTT B input pipe
                     NTTBInputPipe::write(rtl_input);
 

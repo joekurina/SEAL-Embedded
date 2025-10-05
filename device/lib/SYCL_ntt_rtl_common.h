@@ -37,14 +37,18 @@ constexpr size_t NTT_RTL_CAPACITY = 1024;
 
 // Forward declarations for pipe name classes
 class NTTAInputPipeName;
+class NTTAModSelectorPipeName;
 class NTTAOutputPipeName;
 class NTTBInputPipeName;
+class NTTBModSelectorPipeName;
 class NTTBOutputPipeName;
 
 // Internal NTT A Pipeline Pipes (between the 3 NTT A stages)
 using NTTAInputPipe = sycl::ext::intel::pipe<NTTAInputPipeName, NTT_RTL_Input_Data, NTT_RTL_CAPACITY>;
+using NTTAModSelectorPipe = sycl::ext::intel::pipe<NTTAModSelectorPipeName, uint8_t, NTT_RTL_CAPACITY>;
 using NTTAOutputPipe = sycl::ext::intel::pipe<NTTAOutputPipeName, NTT_RTL_Output_Data, NTT_RTL_CAPACITY>;
 
 // Internal NTT B Pipeline Pipes (between the 3 NTT B stages)
 using NTTBInputPipe = sycl::ext::intel::pipe<NTTBInputPipeName, NTT_RTL_Input_Data, NTT_RTL_CAPACITY>;
+using NTTBModSelectorPipe = sycl::ext::intel::pipe<NTTBModSelectorPipeName, uint8_t, NTT_RTL_CAPACITY>;
 using NTTBOutputPipe = sycl::ext::intel::pipe<NTTBOutputPipeName, NTT_RTL_Output_Data, NTT_RTL_CAPACITY>;
