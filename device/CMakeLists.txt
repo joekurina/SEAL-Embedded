@@ -134,7 +134,11 @@ if(TARGET seal_embedded_tests OR SE_BUILD_TYPE STREQUAL "Lib")
               -Xshardware             
               -Xstarget=${FPGA_DEVICE} 
               -fsycl-link=early       
+              -I../lib
+              -I../adapter_output_data
+              -I../lib/rtl
               ../lib/SYCL_ckks_sym.cpp
+              ../lib/rtl/the_nwc_4k_ntt.a
       COMMENT "Compiling SYCL file to generate FPGA hardware report (minimal flags)"
       VERBATIM
       # Run command from build directory
