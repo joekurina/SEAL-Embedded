@@ -198,7 +198,7 @@ Makefile
 # Compiled Static libraries
 *.lai
 *.la
-*.a
+#*.a
 *.lib
 # Compiled Dynamic libraries
 *.so

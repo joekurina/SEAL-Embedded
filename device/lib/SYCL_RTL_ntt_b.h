@@ -16,7 +16,7 @@ public:
     RTLNTTKernel_B() {}
 
     void operator()(sycl::handler& h) const {
-        h.single_task<RTLNTTKernel_B>([=]() [[intel::kernel_args_restrict]] {
+        h.single_task<class RTLNTTKernel_B>([=]() [[intel::kernel_args_restrict]] {
 #ifdef FPGA_EMULATOR
             // Create RTL instance for emulator mode
             reg_test_verifyNTT_multi_DUT* instance = the_nwc_4k_ntt_new_instance();

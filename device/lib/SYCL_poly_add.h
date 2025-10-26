@@ -25,7 +25,7 @@ public:
         size_t kernel_n = n;
         uint32_t kernel_mod_val = mod_value;
         
-        h.single_task([=]() [[intel::kernel_args_restrict]] {
+        h.single_task<class PolyAddModKernel>([=]() [[intel::kernel_args_restrict]] {
             
             // Process each coefficient
             for (size_t i = 0; i < kernel_n; i++) {

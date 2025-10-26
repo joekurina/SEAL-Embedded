@@ -22,7 +22,7 @@ public:
         size_t kernel_n = n;
         uint8_t kernel_mod_sel = mod_sel;
 
-        h.single_task([=]() [[intel::kernel_args_restrict]] {
+        h.single_task<class RTLNTTKenel_B_Input>([=]() [[intel::kernel_args_restrict]] {
             // Calculate number of structs needed (4 elements per struct)
             size_t num_structs = kernel_n / 4;
 

@@ -25,7 +25,7 @@ public:
         // Capture necessary variables for the kernel
         size_t kernel_n = n;
 
-        h.single_task([=]() [[intel::kernel_args_restrict]] {
+        h.single_task<class RTLNTTKernel_B_Output>([=]() [[intel::kernel_args_restrict]] {
             // Calculate number of structs to process (4K points = 1024 structs)
             size_t num_structs = kernel_n / 4;
 

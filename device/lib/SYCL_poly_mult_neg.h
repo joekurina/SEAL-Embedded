@@ -30,7 +30,7 @@ public:
         uint32_t kernel_mod_val = mod_value;
         const uint32_t* kernel_const_ratio = const_ratio;
 
-        h.single_task([=]() [[intel::kernel_args_restrict]] {
+        h.single_task<class PolyMultNegNTTKernel>([=]() [[intel::kernel_args_restrict]] {
             // Process each coefficient
             for (size_t i = 0; i < kernel_n; i++) {
                 // Get initial values

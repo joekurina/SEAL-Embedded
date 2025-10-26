@@ -38,7 +38,7 @@ public:
         uint32_t kernel_mod_val = mod_value;
         const uint32_t* kernel_const_ratio = const_ratio;
 
-        h.single_task([=]() [[intel::kernel_args_restrict]] 
+        h.single_task<class ScaleAndReduceKernel>([=]() [[intel::kernel_args_restrict]] 
         {
             // --- Local array to buffer pipe data ---
             std::complex<double> local_encoded_data[PIPE_CAPACITY];

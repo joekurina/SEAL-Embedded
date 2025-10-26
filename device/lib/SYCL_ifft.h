@@ -25,7 +25,7 @@ public:
         size_t kernel_n = n;
         size_t kernel_logn = logn;
         
-        h.single_task([=]() [[intel::kernel_args_restrict]] {
+        h.single_task<class IFFTKernel>([=]() [[intel::kernel_args_restrict]] {
 
             // Bit-reversal function 
             auto bitrev = [](size_t input, size_t numbits) -> size_t 
