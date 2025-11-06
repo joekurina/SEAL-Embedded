@@ -11,6 +11,8 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>  // memset
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include "ckks_common.h"
 #include "defines.h"
@@ -333,7 +335,29 @@ void ckks_combined_encode_encrypt_sym(
     const PolySizeType n = parms->coeff_count;
     const size_t logn = parms->logn;
     const Modulus* mod = parms->curr_modulus;
+
+    // ==============================================================
+    //  Save the Original Values to file
+    // ==============================================================
+    static int test_counter = 0;
     
+    if (values != NULL && parms->curr_modulus_idx == 0) {
+        char test_dir[256];
+        snprintf(test_dir, sizeof(test_dir), "test_%d", test_counter);
+        mkdir(test_dir, 0755);
+        
+        char filename[512];
+        snprintf(filename, sizeof(filename), "%s/original_values.txt", test_dir);
+        FILE* file = fopen(filename, "w");
+        if (file) {
+            for (size_t i = 0; i < values_len; i++) {
+                fprintf(file, "%.17g\n", values[i]);
+            }
+            fclose(file);
+        }
+        test_counter++;
+    }
+
     // ==============================================================
     //   Create local working buffers for processing
     // ==============================================================
@@ -428,6 +452,7 @@ void ckks_combined_encode_encrypt_sym(
     (size_t)n,                      // Polynomial degree
     logn,                           // Log of polynomial degree
     parms->scale,                   // Scale value
+    parms->curr_modulus_idx,        // Current modulus index
     
     /* modulus related values */
     mod32,                          // Modulus value (q)

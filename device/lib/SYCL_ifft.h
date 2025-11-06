@@ -10,16 +10,19 @@ private:
     size_t n;
     size_t logn;
     mutable sycl::buffer<std::complex<double>, 1> encoding_acc;
+    mutable sycl::buffer<std::complex<double>, 1> ifft_output_acc;
 
 public:
     IFFTKernel( size_t n_val, size_t logn_val,
-                sycl::buffer<std::complex<double>, 1>& encoding_buf)
+                sycl::buffer<std::complex<double>, 1>& encoding_buf,
+                sycl::buffer<std::complex<double>, 1>& ifft_output_buf)
         :   n(n_val), logn(logn_val), 
-            encoding_acc(encoding_buf) {}
-    
+            encoding_acc(encoding_buf), ifft_output_acc(ifft_output_buf) {}
+
     void operator()(sycl::handler& h) const {
         // Get access to the buffers
         auto encoding = encoding_acc.get_access<sycl::access::mode::read_write>(h);
+        auto ifft_output = ifft_output_acc.get_access<sycl::access::mode::write>(h);
 
         // Capture kernel variables
         size_t kernel_n = n;
@@ -67,6 +70,8 @@ public:
             // Pass the transformed values to the pipe
             for (size_t i = 0; i < kernel_n; i++) 
             {
+                // Write transformed encoding values to output buffer
+                ifft_output[i] = encoding[i];
                 // Write transformed encoding values to pipe
                 IFFTToScaleAndReducePipe::write(encoding[i]);
             }

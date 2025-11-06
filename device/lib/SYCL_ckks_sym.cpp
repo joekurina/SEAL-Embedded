@@ -16,6 +16,9 @@
 #include <iostream>
 #include <vector>
 #include <fstream>
+#include <sstream>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 using namespace sycl;
 
@@ -45,7 +48,8 @@ void pipeline(
     buffer<uint32_t, 1>& ntt_a_input_buffer,
     buffer<uint32_t, 1>& ntt_a_output_buffer,
     buffer<uint32_t, 1>& ntt_b_input_buffer,
-    buffer<uint32_t, 1>& ntt_b_output_buffer
+    buffer<uint32_t, 1>& ntt_b_output_buffer,
+    buffer<std::complex<double>, 1>& ifft_output_buffer
 );
 // Forward declare NTT root calculation function
 uint32_t NTT_root(size_t n, uint32_t mod_val);
@@ -56,6 +60,7 @@ extern "C" void SYCL_combined_encrypt(
     size_t n,                       // Polynomial degree.
     size_t logn,                    // Base-2 logarithm of the polynomial degree.
     double scale,                   // CKKS scaling factor.
+    size_t curr_modulus_idx,        // Current modulus index.
 
     // --- Modulus Information ---
     uint32_t mod_value,             // Current modulus prime (q).
@@ -77,7 +82,14 @@ extern "C" void SYCL_combined_encrypt(
     uint32_t* s_save,               // Output: Destination buffer for saving the NTT(s) state from NTTKernel_2. NULL if not needed.
     uint32_t* c1_save               // Output: Destination buffer for saving the original uniform polynomial 'a'. NULL if not needed.
 ) {
-    static bool first_test = true;
+    static int test_counter = 0;
+    static bool increment_next_time = false;
+    
+    // If we're on the first modulus and we've been told to increment, do it now
+    if (curr_modulus_idx == 0 && increment_next_time) {
+        test_counter++;
+        increment_next_time = false;
+    }
     
     // Calculate the NTT root
     uint32_t root = NTT_root(n, mod_value);
@@ -131,11 +143,18 @@ extern "C" void SYCL_combined_encrypt(
          s_save_buf = buffer<uint32_t, 1>(s_save, range(n));
     }
 
-    // Intermediate buffers for testing or debugging
-    buffer<uint32_t, 1> ntt_a_input_buffer{nullptr, range(n)};
-    buffer<uint32_t, 1> ntt_a_output_buffer{nullptr, range(n)};
-    buffer<uint32_t, 1> ntt_b_input_buffer{nullptr, range(n)};
-    buffer<uint32_t, 1> ntt_b_output_buffer{nullptr, range(n)};
+    // Intermediate buffers for testing or debugging - allocate host memory
+    std::vector<uint32_t> ntt_a_input_vec(n);
+    std::vector<uint32_t> ntt_a_output_vec(n);
+    std::vector<uint32_t> ntt_b_input_vec(n);
+    std::vector<uint32_t> ntt_b_output_vec(n);
+    std::vector<std::complex<double>> ifft_output_vec(n);
+    
+    buffer<uint32_t, 1> ntt_a_input_buffer(ntt_a_input_vec.data(), range(n));
+    buffer<uint32_t, 1> ntt_a_output_buffer(ntt_a_output_vec.data(), range(n));
+    buffer<uint32_t, 1> ntt_b_input_buffer(ntt_b_input_vec.data(), range(n));
+    buffer<uint32_t, 1> ntt_b_output_buffer(ntt_b_output_vec.data(), range(n));
+    buffer<std::complex<double>, 1> ifft_output_buffer(ifft_output_vec.data(), range(n));
 
 
     // Create queue
@@ -145,6 +164,24 @@ extern "C" void SYCL_combined_encrypt(
     auto selector = ext::intel::fpga_emulator_selector_v;
 #endif
     queue q{selector, property::queue::enable_profiling()};
+
+    // Create directory for this test (only on first modulus)
+    std::stringstream test_dir;
+    test_dir << "test_" << test_counter;
+    if (curr_modulus_idx == 0) {
+        mkdir(test_dir.str().c_str(), 0755);
+    }
+
+    // Save IFFT input BEFORE the pipeline runs (before it gets modified)
+    {
+        std::stringstream filename;
+        filename << test_dir.str() << "/IFFT_INPUT_mod_" << mod_value << ".txt";
+        std::ofstream file(filename.str());
+        auto host_acc = encoding_buf.get_host_access(sycl::read_only);
+        for (size_t i = 0; i < n; ++i) {
+            file << host_acc[i].real() << " " << host_acc[i].imag() << std::endl;
+        }
+    }
 
     // Execute the full pipeline
     pipeline(
@@ -164,41 +201,63 @@ extern "C" void SYCL_combined_encrypt(
         ntt_a_input_buffer,
         ntt_a_output_buffer,
         ntt_b_input_buffer,
-        ntt_b_output_buffer
+        ntt_b_output_buffer,
+        ifft_output_buffer
     );
     // Results are now in c0_s and s_save host pointers (due to buffer destruction sync)
 
-    // Write the intermediate debugging buffers to files only for the first test
-    if (first_test) {
+    // Write the intermediate debugging buffers to files for each modulus on each test
+    {
         {
-            std::ofstream file("NTT_A_INPUT.txt");
+            std::stringstream filename;
+            filename << test_dir.str() << "/NTT_A_INPUT_mod_" << mod_value << ".txt";
+            std::ofstream file(filename.str());
             auto host_acc = ntt_a_input_buffer.get_host_access(sycl::read_only);
             for (size_t i = 0; i < n; ++i) {
                 file << host_acc[i] << std::endl;
             }
         }
         {
-            std::ofstream file("NTT_A_OUTPUT.txt");
+            std::stringstream filename;
+            filename << test_dir.str() << "/NTT_A_OUTPUT_mod_" << mod_value << ".txt";
+            std::ofstream file(filename.str());
             auto host_acc = ntt_a_output_buffer.get_host_access(sycl::read_only);
             for (size_t i = 0; i < n; ++i) {
                 file << host_acc[i] << std::endl;
             }
         }
         {
-            std::ofstream file("NTT_B_INPUT.txt");
+            std::stringstream filename;
+            filename << test_dir.str() << "/NTT_B_INPUT_mod_" << mod_value << ".txt";
+            std::ofstream file(filename.str());
             auto host_acc = ntt_b_input_buffer.get_host_access(sycl::read_only);
             for (size_t i = 0; i < n; ++i) {
                 file << host_acc[i] << std::endl;
             }
         }
         {
-            std::ofstream file("NTT_B_OUTPUT.txt");
+            std::stringstream filename;
+            filename << test_dir.str() << "/NTT_B_OUTPUT_mod_" << mod_value << ".txt";
+            std::ofstream file(filename.str());
             auto host_acc = ntt_b_output_buffer.get_host_access(sycl::read_only);
             for (size_t i = 0; i < n; ++i) {
                 file << host_acc[i] << std::endl;
             }
         }
-        first_test = false;
+        {
+            std::stringstream filename;
+            filename << test_dir.str() << "/IFFT_OUTPUT_mod_" << mod_value << ".txt";
+            std::ofstream file(filename.str());
+            auto host_acc = ifft_output_buffer.get_host_access(sycl::read_only);
+            for (size_t i = 0; i < n; ++i) {
+                file << host_acc[i].real() << " " << host_acc[i].imag() << std::endl;
+            }
+        }
+    }
+
+    // Mark that we should increment the test counter the next time we see modulus idx 0
+    if (curr_modulus_idx == 0) {
+        increment_next_time = true;
     }
 }
 
@@ -220,7 +279,8 @@ void pipeline(
     buffer<uint32_t, 1>& ntt_a_input_buffer,
     buffer<uint32_t, 1>& ntt_a_output_buffer,
     buffer<uint32_t, 1>& ntt_b_input_buffer,
-    buffer<uint32_t, 1>& ntt_b_output_buffer
+    buffer<uint32_t, 1>& ntt_b_output_buffer,
+    buffer<std::complex<double>, 1>& ifft_output_buffer
 ) {
     uint32_t const_ratio_length = sizeof(const_ratio) / sizeof(const_ratio[0]);
     // First, print out some variables for debugging
@@ -239,7 +299,7 @@ void pipeline(
 
         // Submit IFFTKernel
         q.submit([&](handler &h) {
-            IFFTKernel(n, logn, encoding_buf)(h);
+            IFFTKernel(n, logn, encoding_buf, ifft_output_buffer)(h);
         });
 
         // Submit NTTKernel_2 (Operates on c0_s_buf AND writes to s_save_buf)

@@ -43,6 +43,7 @@ void SYCL_combined_encrypt(
     size_t n,                       // Polynomial degree
     size_t logn,                    // Log of polynomial degree
     double scale,                   // Scale value
+    size_t curr_modulus_idx,        // Current modulus index
     
     /* modulus related values */
     uint32_t mod_value,             // Modulus value (q)
