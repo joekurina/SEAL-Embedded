@@ -7,8 +7,6 @@
 
 // Include the SYCL kernel headers
 #include "SYCL_ifft.h"
-//#include "SYCL_ntt_a.h"
-//#include "SYCL_ntt_b.h"
 #include "SYCL_poly_mult_neg.h"
 #include "SYCL_poly_add.h"
 #include "SYCL_scale_and_reduce.h"
@@ -28,8 +26,6 @@ using namespace sycl;
 
 // Forward declare kernel names
 class IFFTKernel;
-//class NTTKernel_A;
-//class NTTKernel_B;
 class RTLNTTKernel_A_Input;
 class RTLNTTKernel_A;
 class RTLNTTKernel_A_Output;
