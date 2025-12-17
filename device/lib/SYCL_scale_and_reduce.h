@@ -14,13 +14,13 @@ private:
     double scale;
     uint32_t mod_value;
     const uint32_t* const_ratio;
-    mutable sycl::buffer<int8_t, 1> error_samples_acc;
+    mutable sycl::buffer<i8x4_input, 1> error_samples_acc;
 
 public:
     // Constructor takes combined arguments
     ScaleAndReduceKernel(size_t n_val, double scale_val, uint32_t mod_val,
                          const uint32_t* const_ratio_val,
-                         sycl::buffer<int8_t, 1>& error_samples_buf)
+                                                 sycl::buffer<i8x4_input, 1>& error_samples_buf)
         : n(n_val),
           scale(scale_val),
           mod_value(mod_val),
@@ -30,7 +30,7 @@ public:
     void operator()(sycl::handler& h) const 
     {
         // Get access to the error samples buffer
-        auto error_samples = error_samples_acc.get_access<sycl::access::mode::read>(h);
+        auto error_blocks = error_samples_acc.get_access<sycl::access::mode::read>(h);
 
         // Capture necessary variables
         size_t kernel_n = n; 
@@ -40,75 +40,81 @@ public:
 
         h.single_task<class ScaleAndReduceKernel>([=]() [[intel::kernel_args_restrict]] 
         {
-            // --- Local array to buffer pipe data ---
-            std::complex<double> local_encoded_data[PIPE_CAPACITY];
-
-            // --- Processing Phase ---
             double n_inv = kernel_scale / static_cast<double>(kernel_n);
 
-            for (size_t i = 0; i < kernel_n; i++) {
-                std::complex<double> encoded_value = IFFTToScaleAndReducePipe::read(); 
+            for (size_t blk = 0; blk < kernel_n / 4; ++blk) {
+                encoding_buffer_input enc_block = IFFTToScaleAndReducePipe::read();
+                i8x4_input err_block = error_blocks[blk];
 
-                double real_val = encoded_value.real();
-                double scaled = sycl::round(real_val * n_inv);
-                int64_t int_val = static_cast<int64_t>(scaled);
-                int64_t intermediate_result = int_val + error_samples[i];
+                std::complex<double> enc_vals[4] = {enc_block.element0, enc_block.element1, enc_block.element2, enc_block.element3};
+                int8_t err_vals[4] = {err_block.element0, err_block.element1, err_block.element2, err_block.element3};
 
-                int64_t val = intermediate_result;
-                uint64_t coeff_abs = (val < 0) ? static_cast<uint64_t>(-val) : static_cast<uint64_t>(val);
-                uint32_t mask = static_cast<uint32_t>(val < 0);
+                u32x4_input out_block{};
 
-                uint32_t coeff_abs_vec[2];
-                coeff_abs_vec[0] = static_cast<uint32_t>(coeff_abs & 0xFFFFFFFF);
-                coeff_abs_vec[1] = static_cast<uint32_t>((coeff_abs >> 32) & 0xFFFFFFFF);
+                for (size_t lane = 0; lane < 4; ++lane) {
+                    double real_val = enc_vals[lane].real();
+                    double scaled = sycl::round(real_val * n_inv);
+                    int64_t int_val = static_cast<int64_t>(scaled);
+                    int64_t intermediate_result = int_val + err_vals[lane];
 
-                uint32_t right_hw;
-                {
-                    uint64_t res_temp = (uint64_t)coeff_abs_vec[0] * (uint64_t)kernel_const_ratio[0];
-                    right_hw = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
+                    int64_t val = intermediate_result;
+                    uint64_t coeff_abs = (val < 0) ? static_cast<uint64_t>(-val) : static_cast<uint64_t>(val);
+                    uint32_t mask = static_cast<uint32_t>(val < 0);
+
+                    uint32_t coeff_abs_vec[2];
+                    coeff_abs_vec[0] = static_cast<uint32_t>(coeff_abs & 0xFFFFFFFF);
+                    coeff_abs_vec[1] = static_cast<uint32_t>((coeff_abs >> 32) & 0xFFFFFFFF);
+
+                    uint32_t right_hw;
+                    {
+                        uint64_t res_temp = (uint64_t)coeff_abs_vec[0] * (uint64_t)kernel_const_ratio[0];
+                        right_hw = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
+                    }
+                    uint32_t middle_temp[2];
+                    {
+                        uint64_t res_temp = (uint64_t)coeff_abs_vec[0] * (uint64_t)kernel_const_ratio[1];
+                        middle_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
+                        middle_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
+                    }
+                    uint32_t middle_lw;
+                    uint32_t middle_lw_carry;
+                    {
+                        middle_lw = right_hw + middle_temp[0];
+                        middle_lw_carry = (uint8_t)(middle_lw < right_hw);
+                    }
+                    uint32_t middle_hw = middle_temp[1] + middle_lw_carry;
+
+                    uint32_t middle2_temp[2];
+                    {
+                        uint64_t res_temp = (uint64_t)coeff_abs_vec[1] * (uint64_t)kernel_const_ratio[0];
+                        middle2_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
+                        middle2_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
+                    }
+                    uint32_t middle2_lw;
+                    uint32_t middle2_lw_carry;
+                    {
+                        middle2_lw = middle_lw + middle2_temp[0];
+                        middle2_lw_carry = (uint8_t)(middle2_lw < middle_lw);
+                    }
+                    uint32_t middle2_hw = middle2_temp[1] + middle2_lw_carry;
+                    uint32_t tmp = coeff_abs_vec[1] * kernel_const_ratio[1] + middle_hw + middle2_hw;
+
+                    tmp = coeff_abs_vec[0] - tmp * kernel_mod_val;
+
+                    uint32_t coeff_crt;
+                    {
+                        int32_t is_2q = (int32_t)(tmp >= kernel_mod_val);
+                        uint32_t tmp_mask = (uint32_t)(-is_2q);
+                        coeff_crt = (uint32_t)(tmp) - (kernel_mod_val & tmp_mask);
+                    }
+
+                    uint32_t final_result = ((kernel_mod_val - coeff_crt) & (-mask)) + (coeff_crt & (mask - 1));
+
+                    reinterpret_cast<uint32_t*>(&out_block)[lane] = final_result;
                 }
-                uint32_t middle_temp[2];
-                {
-                    uint64_t res_temp = (uint64_t)coeff_abs_vec[0] * (uint64_t)kernel_const_ratio[1];
-                    middle_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                    middle_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                }
-                uint32_t middle_lw;
-                uint32_t middle_lw_carry;
-                {
-                    middle_lw = right_hw + middle_temp[0];
-                    middle_lw_carry = (uint8_t)(middle_lw < right_hw);
-                }
-                uint32_t middle_hw = middle_temp[1] + middle_lw_carry;
 
-                uint32_t middle2_temp[2];
-                {
-                    uint64_t res_temp = (uint64_t)coeff_abs_vec[1] * (uint64_t)kernel_const_ratio[0];
-                    middle2_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                    middle2_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
-                }
-                uint32_t middle2_lw;
-                uint32_t middle2_lw_carry;
-                {
-                    middle2_lw = middle_lw + middle2_temp[0];
-                    middle2_lw_carry = (uint8_t)(middle2_lw < middle_lw);
-                }
-                uint32_t middle2_hw = middle2_temp[1] + middle2_lw_carry;
-                uint32_t tmp = coeff_abs_vec[1] * kernel_const_ratio[1] + middle_hw + middle2_hw;
-
-                tmp = coeff_abs_vec[0] - tmp * kernel_mod_val;
-
-                uint32_t coeff_crt;
-                {
-                    int32_t is_2q = (int32_t)(tmp >= kernel_mod_val);
-                    uint32_t tmp_mask = (uint32_t)(-is_2q);
-                    coeff_crt = (uint32_t)(tmp) - (kernel_mod_val & tmp_mask);
-                }
-
-                uint32_t final_result = ((kernel_mod_val - coeff_crt) & (-mask)) + (coeff_crt & (mask - 1));
-
-                ScaleReduceToNTTBPipe::write(final_result); 
-            } // End of for loop
+                ScaleReduceToNTTBPipe::write(out_block); 
+            } // End of block loop
         }); // End single_task
     } // End operator()
 }; // End of ScaleAndReduceKernel class

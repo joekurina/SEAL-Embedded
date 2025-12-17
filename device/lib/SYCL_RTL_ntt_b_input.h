@@ -23,39 +23,19 @@ public:
         uint8_t kernel_mod_sel = mod_sel;
 
         h.single_task<class RTLNTTKenel_B_Input>([=]() [[intel::kernel_args_restrict]] {
-            // Calculate number of structs needed (4 elements per struct)
             size_t num_structs = kernel_n / 4;
 
-            // Buffer to accumulate 4 elements before creating a struct
-            uint32_t element_buffer[4];
-            size_t buffer_index = 0;
+            for (size_t blk = 0; blk < num_structs; ++blk) {
+                u32x4_input packed = ScaleReduceToNTTBPipe::read();
 
-            // Read individual elements from the existing pipeline
-            for (size_t i = 0; i < kernel_n; ++i) {
-                // Read from the existing ScaleReduceToNTTBPipe (blocking read)
-                uint32_t pipe_element = ScaleReduceToNTTBPipe::read();
+                NTT_RTL_Input_Data rtl_input;
+                rtl_input.port_x_in_0 = static_cast<int32_t>(packed.element0);
+                rtl_input.port_x_in_1 = static_cast<int32_t>(packed.element1);
+                rtl_input.port_x_in_2 = static_cast<int32_t>(packed.element2);
+                rtl_input.port_x_in_3 = static_cast<int32_t>(packed.element3);
 
-                // Accumulate elements in buffer
-                element_buffer[buffer_index] = pipe_element;
-                buffer_index++;
-
-                // When we have 4 elements, create an RTL input struct
-                if (buffer_index == 4) {
-                    // Create RTL input data structure
-                    NTT_RTL_Input_Data rtl_input;
-                    rtl_input.port_x_in_0 = static_cast<int32_t>(element_buffer[0]);
-                    rtl_input.port_x_in_1 = static_cast<int32_t>(element_buffer[1]);
-                    rtl_input.port_x_in_2 = static_cast<int32_t>(element_buffer[2]);
-                    rtl_input.port_x_in_3 = static_cast<int32_t>(element_buffer[3]);
-
-                    // Write modulus selector to pipe
-                    NTTBModSelectorPipe::write(kernel_mod_sel);
-                    // Write to NTT B input pipe
-                    NTTBInputPipe::write(rtl_input);
-
-                    // Reset buffer
-                    buffer_index = 0;
-                }
+                NTTBModSelectorPipe::write(kernel_mod_sel);
+                NTTBInputPipe::write(rtl_input);
             }
         }); // End single_task lambda
     } // End operator()

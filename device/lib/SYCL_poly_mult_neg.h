@@ -1,127 +1,88 @@
 #pragma once
 
-#include "SYCL_ckks_sym.h" // Assuming this contains necessary base types
+#include "SYCL_ckks_sym.h"
+#include "SYCL_pipes.h"
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
-// Combined Kernel for In-place Polynomial Multiplication followed by Negation in NTT form
-// Computes: a = -(a * b) mod q
+// Kernel: multiply pointwise in NTT domain and negate, operating on packed 4-lane blocks.
 class PolyMultNegNTTKernel {
 private:
     size_t n;
     uint32_t mod_value;
-    const uint32_t* const_ratio; // For Barrett reduction in multiplication
-    mutable sycl::buffer<uint32_t, 1> b_acc; // Input buffer
+    const uint32_t* const_ratio;              // Barrett reduction constants
+    mutable sycl::buffer<u32x4_input, 1> b_acc; // Input buffer packed
 
 public:
     PolyMultNegNTTKernel(size_t n_val, uint32_t mod_val, const uint32_t* const_ratio_val,
-                         sycl::buffer<uint32_t, 1>& b_buf) // In
-        : n(n_val),
-          mod_value(mod_val),
-          const_ratio(const_ratio_val),
-          b_acc(b_buf) {}
+                         sycl::buffer<u32x4_input, 1>& b_buf)
+        : n(n_val), mod_value(mod_val), const_ratio(const_ratio_val), b_acc(b_buf) {}
 
     void operator()(sycl::handler& h) const {
-        // Get access to buffer
-        auto b = b_acc.get_access<sycl::access::mode::read>(h);
+        auto b_blocks = b_acc.get_access<sycl::access::mode::read>(h);
 
-        // Capture necessary variables
         size_t kernel_n = n;
         uint32_t kernel_mod_val = mod_value;
         const uint32_t* kernel_const_ratio = const_ratio;
 
         h.single_task<class PolyMultNegNTTKernel>([=]() [[intel::kernel_args_restrict]] {
-            // Process each coefficient
-            for (size_t i = 0; i < kernel_n; i++) {
-                // Get initial values
-                uint32_t a_val = NTTToPolyMultNegPipe::read(); // Read from the pipe
-                uint32_t b_val = b[i];
+            for (size_t blk = 0; blk < kernel_n / 4; ++blk) {
+                u32x4_input a_block = NTTToPolyMultNegPipe::read();
+                u32x4_input b_block = b_blocks[blk];
+                u32x4_input out_block{};
 
-                // --- Step 1: Polynomial Multiplication (a_val * b_val) mod q ---
-                // Logic copied directly from PolyMultNTTKernel with original formatting
-                uint32_t mult_result;
-                {
-                    // 1. Multiply to get wide result
-                    uint64_t res_temp = (uint64_t)a_val * (uint64_t)b_val;
+                for (size_t lane = 0; lane < 4; ++lane) {
+                    uint32_t a_val = reinterpret_cast<const uint32_t*>(&a_block)[lane];
+                    uint32_t b_val = reinterpret_cast<const uint32_t*>(&b_block)[lane];
+
+                    uint64_t wide = static_cast<uint64_t>(a_val) * static_cast<uint64_t>(b_val);
                     uint32_t product[2];
-                    product[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
-                    product[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
+                    product[0] = static_cast<uint32_t>(wide & 0xFFFFFFFFu);
+                    product[1] = static_cast<uint32_t>((wide >> 32) & 0xFFFFFFFFu);
 
-                    // 2. Barrett reduction starts here
-                    // Round 1
                     uint32_t right_hw;
                     {
-                        uint32_t res[2];
-                        uint64_t rt_temp = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[0];
-                        res[0] = (uint32_t)(rt_temp & 0xFFFFFFFF);
-                        res[1] = (uint32_t)((rt_temp >> 32) & 0xFFFFFFFF);
-                        right_hw = res[1];
+                        uint64_t rt_temp = static_cast<uint64_t>(product[0]) * static_cast<uint64_t>(kernel_const_ratio[0]);
+                        right_hw = static_cast<uint32_t>((rt_temp >> 32) & 0xFFFFFFFFu);
                     }
 
                     uint32_t middle_temp[2];
                     {
-                        uint64_t mt_temp = (uint64_t)product[0] * (uint64_t)kernel_const_ratio[1];
-                        middle_temp[0] = (uint32_t)(mt_temp & 0xFFFFFFFF);
-                        middle_temp[1] = (uint32_t)((mt_temp >> 32) & 0xFFFFFFFF);
+                        uint64_t mt_temp = static_cast<uint64_t>(product[0]) * static_cast<uint64_t>(kernel_const_ratio[1]);
+                        middle_temp[0] = static_cast<uint32_t>(mt_temp & 0xFFFFFFFFu);
+                        middle_temp[1] = static_cast<uint32_t>((mt_temp >> 32) & 0xFFFFFFFFu);
                     }
 
-                    uint32_t middle_lw;
-                    uint32_t middle_lw_carry;
-                    {
-                        middle_lw = right_hw + middle_temp[0];
-                        middle_lw_carry = (uint8_t)(middle_lw < right_hw);
-                    }
-
+                    uint32_t middle_lw = right_hw + middle_temp[0];
+                    uint32_t middle_lw_carry = static_cast<uint8_t>(middle_lw < right_hw);
                     uint32_t middle_hw = middle_temp[1] + middle_lw_carry;
 
-                    // Round 2
                     uint32_t middle2_temp[2];
                     {
-                        uint64_t mt2_temp = (uint64_t)product[1] * (uint64_t)kernel_const_ratio[0];
-                        middle2_temp[0] = (uint32_t)(mt2_temp & 0xFFFFFFFF);
-                        middle2_temp[1] = (uint32_t)((mt2_temp >> 32) & 0xFFFFFFFF);
+                        uint64_t mt2_temp = static_cast<uint64_t>(product[1]) * static_cast<uint64_t>(kernel_const_ratio[0]);
+                        middle2_temp[0] = static_cast<uint32_t>(mt2_temp & 0xFFFFFFFFu);
+                        middle2_temp[1] = static_cast<uint32_t>((mt2_temp >> 32) & 0xFFFFFFFFu);
                     }
 
-                    uint32_t middle2_lw;
-                    uint32_t middle2_lw_carry;
-                    {
-                        middle2_lw = middle_lw + middle2_temp[0];
-                        middle2_lw_carry = (uint8_t)(middle2_lw < middle_lw);
-                    }
-
+                    uint32_t middle2_lw = middle_lw + middle2_temp[0];
+                    uint32_t middle2_lw_carry = static_cast<uint8_t>(middle2_lw < middle_lw);
                     uint32_t middle2_hw = middle2_temp[1] + middle2_lw_carry;
 
                     uint32_t tmp = product[1] * kernel_const_ratio[1] + middle_hw + middle2_hw;
-
-                    // Barrett subtraction
                     tmp = product[0] - tmp * kernel_mod_val;
 
-                    // Final reduction if needed
-                    // Note: Original PolyMultNTTKernel used '>=' check here which is standard for Barrett.
-                    // If result can be exactly 'q', this reduces it to 0.
-                    int32_t is_ge_q = (int32_t)(tmp >= kernel_mod_val);
-                    uint32_t mask_red = (uint32_t)(-is_ge_q);
-                    mult_result = tmp - (kernel_mod_val & mask_red); // Store result of multiplication
-                } // End of multiplication logic
+                    int32_t is_ge_q = static_cast<int32_t>(tmp >= kernel_mod_val);
+                    uint32_t mask_red = static_cast<uint32_t>(-is_ge_q);
+                    uint32_t mult_result = tmp - (kernel_mod_val & mask_red);
 
+                    int32_t non_zero = static_cast<int32_t>(mult_result != 0);
+                    uint32_t mask_neg = static_cast<uint32_t>(-non_zero);
+                    uint32_t neg_result = (kernel_mod_val - mult_result) & mask_neg;
 
-                // --- Step 2: Polynomial Negation (-mult_result) mod q ---
-                // Logic copied directly from PolyNegModKernel, applied to mult_result
-                uint32_t neg_result;
-                {
-                    uint32_t coeff_to_negate = mult_result; // Use the multiplication result
+                    reinterpret_cast<uint32_t*>(&out_block)[lane] = neg_result;
+                }
 
-                    // Compute if coefficient is non-zero
-                    int32_t non_zero = (int32_t)(coeff_to_negate != 0);
-                    uint32_t mask_neg = (uint32_t)(-non_zero);
-
-                    // Compute negation: if coeff == 0, result = 0; else result = q - coeff
-                    neg_result = (kernel_mod_val - coeff_to_negate) & mask_neg;
-                } // End of negation logic
-
-
-                // --- Step 3: Write the negated result to the pipe for further processing
-                PolyMultNegToPolyAddModPipe::write(neg_result); // Write to the pipe
+                PolyMultNegToPolyAddModPipe::write(out_block);
             }
         });
     }

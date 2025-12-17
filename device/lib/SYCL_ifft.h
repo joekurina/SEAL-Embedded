@@ -9,17 +9,17 @@ class IFFTKernel {
 private:
     size_t n;
     size_t logn;
-    mutable sycl::buffer<std::complex<double>, 1> encoding_acc;
+    mutable sycl::buffer<encoding_buffer_input, 1> encoding_acc;
 
 public:
     IFFTKernel( size_t n_val, size_t logn_val,
-                sycl::buffer<std::complex<double>, 1>& encoding_buf)
+                sycl::buffer<encoding_buffer_input, 1>& encoding_buf)
             :   n(n_val), logn(logn_val), 
                 encoding_acc(encoding_buf) {}
     
     void operator()(sycl::handler& h) const {
         // Get access to the buffers
-        auto encoding = encoding_acc.get_access<sycl::access::mode::read_write>(h);
+        auto encoding_blocks = encoding_acc.get_access<sycl::access::mode::read>(h);
 
         // Capture kernel variables
         size_t kernel_n = n;
@@ -44,6 +44,16 @@ public:
                 return std::complex<double>(sycl::cos(angle), sycl::sin(angle));
             };
             
+            // Unpack 4-lane structs into a flat local array for computation
+            std::complex<double> encoding[4096];
+            for (size_t blk = 0, idx = 0; blk < kernel_n / 4; ++blk) {
+                encoding_buffer_input blk_data = encoding_blocks[blk];
+                encoding[idx++] = blk_data.element0;
+                encoding[idx++] = blk_data.element1;
+                encoding[idx++] = blk_data.element2;
+                encoding[idx++] = blk_data.element3;
+            }
+
             // IFFT implementation 
             size_t tt = 1, h = kernel_n / 2;
             
@@ -65,11 +75,15 @@ public:
                 }
             } // End of IFFT computation
 
-            // Pass the transformed values to the pipe
-            for (size_t i = 0; i < kernel_n; i++)
+            // Pass the transformed values to the pipe in 4-lane structs
+            for (size_t i = 0; i < kernel_n; i += 4)
             {
-                // Write transformed encoding values to pipe
-                IFFTToScaleAndReducePipe::write(encoding[i]);
+                encoding_buffer_input block{};
+                block.element0 = encoding[i + 0];
+                block.element1 = encoding[i + 1];
+                block.element2 = encoding[i + 2];
+                block.element3 = encoding[i + 3];
+                IFFTToScaleAndReducePipe::write(block);
             }
         }); // End of single_task
     } // End of operator()

@@ -12,13 +12,13 @@ class RTLNTTKernel_A_Input {
 private:
     size_t n;                                       // Number of elements to process
     uint8_t mod_sel;                               // Modulus selector
-    mutable sycl::buffer<uint32_t, 1> vec_acc;      // Input buffer (secret key data)
+    mutable sycl::buffer<u32x4_input, 1> vec_acc;      // Input buffer (secret key data, packed)
 
 public:
     // Constructor accepting input and save buffers
     RTLNTTKernel_A_Input(size_t n_val,
                          uint8_t mod_selector,
-                         sycl::buffer<uint32_t, 1>& vec_buf)  // Input (secret key data)
+                                                 sycl::buffer<u32x4_input, 1>& vec_buf)  // Input (secret key data)
                         : n(n_val),
                           mod_sel(mod_selector), 
                           vec_acc(vec_buf) {}
@@ -32,23 +32,17 @@ public:
         uint8_t kernel_mod_sel = mod_sel;
 
         h.single_task<class RTLNTTKernel_A_Input>([=]() [[intel::kernel_args_restrict]] {
-            // Calculate number of structs needed (4 elements per struct)
             size_t num_structs = kernel_n / 4;
 
-            // Process data in chunks of 4 elements
+            // Process data in packed 4-element blocks
             for (size_t i = 0; i < num_structs; ++i) {
-                // Read 4 consecutive elements from input buffer
-                uint32_t elem_0 = data[i * 4 + 0];
-                uint32_t elem_1 = data[i * 4 + 1];
-                uint32_t elem_2 = data[i * 4 + 2];
-                uint32_t elem_3 = data[i * 4 + 3];
+                u32x4_input packed = data[i];
 
-                // Create RTL input data structure
                 NTT_RTL_Input_Data rtl_input;
-                rtl_input.port_x_in_0 = static_cast<int32_t>(elem_0);
-                rtl_input.port_x_in_1 = static_cast<int32_t>(elem_1);
-                rtl_input.port_x_in_2 = static_cast<int32_t>(elem_2);
-                rtl_input.port_x_in_3 = static_cast<int32_t>(elem_3);
+                rtl_input.port_x_in_0 = static_cast<int32_t>(packed.element0);
+                rtl_input.port_x_in_1 = static_cast<int32_t>(packed.element1);
+                rtl_input.port_x_in_2 = static_cast<int32_t>(packed.element2);
+                rtl_input.port_x_in_3 = static_cast<int32_t>(packed.element3);
                 
                 // Write modulus selector to pipe
                 NTTAModSelectorPipe::write(kernel_mod_sel);
