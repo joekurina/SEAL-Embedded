@@ -6,8 +6,12 @@
 #include <sycl/ext/intel/fpga_extensions.hpp>
 #include <cstdint>
 
-// Merged Kernel: Performs Scaling/Conversion and Reduction
-class ScaleAndReduceKernel 
+template <int P>
+class ScaleAndReduceKernelTask;
+
+// Merged Kernel: Performs Scaling/Conversion and Reduction (templated on pipeline index)
+template <int P>
+class ScaleAndReduceKernelT 
 {
 private:
     size_t n;
@@ -18,9 +22,9 @@ private:
 
 public:
     // Constructor takes combined arguments
-    ScaleAndReduceKernel(size_t n_val, double scale_val, uint32_t mod_val,
-                         const uint32_t* const_ratio_val,
-                                                 sycl::buffer<i8x4_input, 1>& error_samples_buf)
+        ScaleAndReduceKernelT(size_t n_val, double scale_val, uint32_t mod_val,
+                                                    const uint32_t* const_ratio_val,
+                                                    sycl::buffer<i8x4_input, 1>& error_samples_buf)
         : n(n_val),
           scale(scale_val),
           mod_value(mod_val),
@@ -38,12 +42,13 @@ public:
         uint32_t kernel_mod_val = mod_value;
         const uint32_t* kernel_const_ratio = const_ratio;
 
-        h.single_task<class ScaleAndReduceKernel>([=]() [[intel::kernel_args_restrict]] 
+        h.single_task<ScaleAndReduceKernelTask<P>>([=]() [[intel::kernel_args_restrict]] 
         {
             double n_inv = kernel_scale / static_cast<double>(kernel_n);
 
             for (size_t blk = 0; blk < kernel_n / 4; ++blk) {
-                encoding_buffer_input enc_block = IFFTToScaleAndReducePipe::read();
+                using PipeSet = CKKS_PIPE_SET<P>;
+                encoding_buffer_input enc_block = PipeSet::IFFTToScaleAndReducePipe::read();
                 i8x4_input err_block = error_blocks[blk];
 
                 std::complex<double> enc_vals[4] = {enc_block.element0, enc_block.element1, enc_block.element2, enc_block.element3};
@@ -113,8 +118,11 @@ public:
                     reinterpret_cast<uint32_t*>(&out_block)[lane] = final_result;
                 }
 
-                ScaleReduceToNTTBPipe::write(out_block); 
+                PipeSet::ScaleReduceToNTTBPipe::write(out_block); 
             } // End of block loop
         }); // End single_task
     } // End operator()
-}; // End of ScaleAndReduceKernel class
+}; // End of ScaleAndReduceKernelT class
+
+// Backwards-compatible alias for pipeline P = 0.
+using ScaleAndReduceKernel = ScaleAndReduceKernelT<0>;

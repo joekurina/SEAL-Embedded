@@ -313,7 +313,8 @@ bool ckks_next_prime_sym(Parms *parms, ZZ *s)
     return ret;
 }
 
-void ckks_combined_encode_encrypt_sym(
+static void ckks_combined_encode_encrypt_sym_impl(
+    int pipeline_index,
     const Parms* parms,              // CKKS parameters
     const flpt* values,              // Raw input values to encode
     size_t values_len,               // Number of input values
@@ -328,7 +329,8 @@ void ckks_combined_encode_encrypt_sym(
     ZZ* c1_save,                     // Optional: Save c1 (for testing)
     complex_double* encoding_buffer, // Buffer for encoding (can be NULL)
     uint16_t* index_map              // Index map (can be NULL depending on config)
-) {
+)
+{
     se_assert(parms != NULL);
     const PolySizeType n = parms->coeff_count;
     const size_t logn = parms->logn;
@@ -423,7 +425,8 @@ void ckks_combined_encode_encrypt_sym(
     const uint32_t* const_ratio32 = (const uint32_t*)(mod->const_ratio);
     
     // Call the SYCL implementation with extracted values
-    SYCL_combined_encrypt(
+    SYCL_combined_encrypt_pipeline(
+    pipeline_index,
     /* parms related values */
     (size_t)n,                      // Polynomial degree
     logn,                           // Log of polynomial degree
@@ -456,4 +459,48 @@ void ckks_combined_encode_encrypt_sym(
     free(local_error_samples);
     free(local_pt_with_error);
     free(local_uniform_poly);
+}
+
+void ckks_combined_encode_encrypt_sym(
+    const Parms* parms,
+    const flpt* values,
+    size_t values_len,
+    SE_PRNG* shareable_prng,
+    SE_PRNG* error_prng,
+    ZZ* s_small,
+    ZZ* ntt_pte,
+    ZZ* ntt_roots,
+    ZZ* c0_s,
+    ZZ* c1,
+    ZZ* s_save,
+    ZZ* c1_save,
+    complex_double* encoding_buffer,
+    uint16_t* index_map)
+{
+    ckks_combined_encode_encrypt_sym_impl(0, parms, values, values_len, shareable_prng, error_prng, s_small,
+                                          ntt_pte, ntt_roots, c0_s, c1, s_save, c1_save, encoding_buffer,
+                                          index_map);
+}
+
+// Pipeline-indexed entry point to allow concurrent launches on independent pipe sets.
+void ckks_combined_encode_encrypt_sym_pipeline(
+    int pipeline_index,
+    const Parms* parms,
+    const flpt* values,
+    size_t values_len,
+    SE_PRNG* shareable_prng,
+    SE_PRNG* error_prng,
+    ZZ* s_small,
+    ZZ* ntt_pte,
+    ZZ* ntt_roots,
+    ZZ* c0_s,
+    ZZ* c1,
+    ZZ* s_save,
+    ZZ* c1_save,
+    complex_double* encoding_buffer,
+    uint16_t* index_map)
+{
+    ckks_combined_encode_encrypt_sym_impl(pipeline_index, parms, values, values_len, shareable_prng,
+                                          error_prng, s_small, ntt_pte, ntt_roots, c0_s, c1, s_save,
+                                          c1_save, encoding_buffer, index_map);
 }

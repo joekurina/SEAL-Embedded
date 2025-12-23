@@ -5,15 +5,19 @@
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
-class IFFTKernel {
+template <int P>
+class IFFTKernelTask;
+
+template <int P>
+class IFFTKernelT {
 private:
     size_t n;
     size_t logn;
     mutable sycl::buffer<encoding_buffer_input, 1> encoding_acc;
 
 public:
-    IFFTKernel( size_t n_val, size_t logn_val,
-                sycl::buffer<encoding_buffer_input, 1>& encoding_buf)
+    IFFTKernelT( size_t n_val, size_t logn_val,
+                 sycl::buffer<encoding_buffer_input, 1>& encoding_buf)
             :   n(n_val), logn(logn_val), 
                 encoding_acc(encoding_buf) {}
     
@@ -25,7 +29,7 @@ public:
         size_t kernel_n = n;
         size_t kernel_logn = logn;
         
-        h.single_task<class IFFTKernel>([=]() [[intel::kernel_args_restrict]] {
+        h.single_task<IFFTKernelTask<P>>([=]() [[intel::kernel_args_restrict]] {
 
             // Bit-reversal function 
             auto bitrev = [](size_t input, size_t numbits) -> size_t 
@@ -83,8 +87,12 @@ public:
                 block.element1 = encoding[i + 1];
                 block.element2 = encoding[i + 2];
                 block.element3 = encoding[i + 3];
-                IFFTToScaleAndReducePipe::write(block);
+                using PipeSet = CKKS_PIPE_SET<P>;
+                PipeSet::IFFTToScaleAndReducePipe::write(block);
             }
         }); // End of single_task
     } // End of operator()
-}; // End of IFFTKernel class
+}; // End of IFFTKernelT class
+
+// Backwards-compatible alias for pipeline P = 0.
+using IFFTKernel = IFFTKernelT<0>;

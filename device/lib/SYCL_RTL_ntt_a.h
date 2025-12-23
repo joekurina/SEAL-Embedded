@@ -8,30 +8,36 @@
 #include <cstdio>
 #include <cstdlib>
 
-// RTL NTT A Main Kernel
-class RTLNTTKernel_A {
+template <int P>
+class RTLNTTKernel_A_Task;
+
+// RTL NTT A Main Kernel (templated on pipeline index)
+template <int P>
+class RTLNTTKernel_AT {
 private:
 
 public:
-    RTLNTTKernel_A() {}
+    RTLNTTKernel_AT() {}
 
     void operator()(sycl::handler& h) const {
-        h.single_task<class RTLNTTKernel_A>([=]() [[intel::kernel_args_restrict]] {
+        h.single_task<RTLNTTKernel_A_Task<P>>([=]() [[intel::kernel_args_restrict]] {
 #ifdef FPGA_EMULATOR
             // Create RTL instance for emulator mode
             reg_test_verifyNTT_multi_DUT* instance = the_nwc_4k_ntt_new_instance();
 #endif
+            size_t output_counter = 0;
             // Calculate number of structs to process (4K points = 1024 structs)
             size_t num_structs = NTT_RTL_CAPACITY;
 
             // Process data structures through the RTL
             [[intel::initiation_interval(1)]]
-            while (1) {
+            while (output_counter < num_structs) {
                 // Read from input pipe (non-blocking)
                 bool input_valid = false;
                 bool mod_sel_valid = false;
-                NTT_RTL_Input_Data pipe_input = NTTAInputPipe::read(input_valid);
-                uint8_t kernel_mod_selector = NTTAModSelectorPipe::read(mod_sel_valid);
+                using PipeSet = NTT_PIPE_SET<P>;
+                NTT_RTL_Input_Data pipe_input = PipeSet::NTTAInputPipe::read(input_valid);
+                uint8_t kernel_mod_selector = PipeSet::NTTAModSelectorPipe::read(mod_sel_valid);
 
                 // If no valid input, exit the loop
                 //if (!input_valid) break;
@@ -61,7 +67,8 @@ public:
                     pipe_output.port_out_q_3 = rtl_output.port_out_q_3;
 
                     // Write to output pipe
-                    NTTAOutputPipe::write(pipe_output);
+                    PipeSet::NTTAOutputPipe::write(pipe_output);
+                    output_counter++;
                 }
             }
 
@@ -71,4 +78,7 @@ public:
 #endif
         }); // End single_task lambda
     } // End operator()
-}; // End RTLNTTKernel_A class
+}; // End RTLNTTKernel_AT class
+
+// Backwards-compatible alias for pipeline P = 0.
+using RTLNTTKernel_A = RTLNTTKernel_AT<0>;

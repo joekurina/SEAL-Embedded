@@ -5,16 +5,20 @@
 #include <sycl/ext/intel/fpga_extensions.hpp>
 #include "SYCL_pipes.h"
 
-// Kernel for modular addition of two polynomials
-class PolyAddModKernel {
+template <int P>
+class PolyAddModKernelTask;
+
+// Kernel for modular addition of two polynomials (templated on pipeline index)
+template <int P>
+class PolyAddModKernelT {
 private:
     size_t n;
     uint32_t mod_value;
     mutable sycl::buffer<u32x4_input, 1> output_acc;
 
 public:
-    PolyAddModKernel(size_t n_val, uint32_t mod_val,
-                        sycl::buffer<u32x4_input, 1>& output_buf)
+    PolyAddModKernelT(size_t n_val, uint32_t mod_val,
+                      sycl::buffer<u32x4_input, 1>& output_buf)
         : n(n_val), mod_value(mod_val), output_acc(output_buf) {}
     
     void operator()(sycl::handler& h) const {
@@ -25,12 +29,13 @@ public:
         size_t kernel_n = n;
         uint32_t kernel_mod_val = mod_value;
         
-        h.single_task<class PolyAddModKernel>([=]() [[intel::kernel_args_restrict]] {
+        h.single_task<PolyAddModKernelTask<P>>([=]() [[intel::kernel_args_restrict]] {
             
             // Process coefficients in packed 4-lane blocks
             for (size_t blk = 0; blk < kernel_n / 4; ++blk) {
-                u32x4_input a_block = PolyMultNegToPolyAddModPipe::read();
-                u32x4_input b_block = NTTToAddModPipe::read();
+                using PipeSet = CKKS_PIPE_SET<P>;
+                u32x4_input a_block = PipeSet::PolyMultNegToPolyAddModPipe::read();
+                u32x4_input b_block = PipeSet::NTTToAddModPipe::read();
 
                 u32x4_input out_block{};
 
@@ -51,3 +56,6 @@ public:
         });
     }
 };
+
+// Backwards-compatible alias for pipeline P = 0.
+using PolyAddModKernel = PolyAddModKernelT<0>;

@@ -61,6 +61,26 @@ void SYCL_combined_encrypt(
     uint32_t* c1_save               // Optional: Save c1 (for testing)
 );
 
+// Launch the SYCL pipeline on a specific pipeline index (0, 1, 2) to enable
+// concurrent execution across independent pipe namespaces.
+void SYCL_combined_encrypt_pipeline(
+    int pipeline_index,
+    size_t n,
+    size_t logn,
+    double scale,
+    uint32_t mod_value,
+    const uint32_t* const_ratio,
+    complex_double* encoding_buffer,
+    uint32_t* expanded_s,
+    uint32_t* uniform_poly,
+    int8_t* error_samples,
+    int64_t* pt_with_error,
+    uint32_t* ntt_pte,
+    uint32_t* c0_s,
+    uint32_t* c1,
+    uint32_t* s_save,
+    uint32_t* c1_save);
+
 #ifdef __cplusplus
 }
 #endif

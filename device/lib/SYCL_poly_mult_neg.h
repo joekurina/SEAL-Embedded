@@ -5,8 +5,12 @@
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
+template <int P>
+class PolyMultNegNTTKernelTask;
+
 // Kernel: multiply pointwise in NTT domain and negate, operating on packed 4-lane blocks.
-class PolyMultNegNTTKernel {
+template <int P>
+class PolyMultNegNTTKernelT {
 private:
     size_t n;
     uint32_t mod_value;
@@ -14,8 +18,8 @@ private:
     mutable sycl::buffer<u32x4_input, 1> b_acc; // Input buffer packed
 
 public:
-    PolyMultNegNTTKernel(size_t n_val, uint32_t mod_val, const uint32_t* const_ratio_val,
-                         sycl::buffer<u32x4_input, 1>& b_buf)
+    PolyMultNegNTTKernelT(size_t n_val, uint32_t mod_val, const uint32_t* const_ratio_val,
+                          sycl::buffer<u32x4_input, 1>& b_buf)
         : n(n_val), mod_value(mod_val), const_ratio(const_ratio_val), b_acc(b_buf) {}
 
     void operator()(sycl::handler& h) const {
@@ -25,9 +29,10 @@ public:
         uint32_t kernel_mod_val = mod_value;
         const uint32_t* kernel_const_ratio = const_ratio;
 
-        h.single_task<class PolyMultNegNTTKernel>([=]() [[intel::kernel_args_restrict]] {
+        h.single_task<PolyMultNegNTTKernelTask<P>>([=]() [[intel::kernel_args_restrict]] {
             for (size_t blk = 0; blk < kernel_n / 4; ++blk) {
-                u32x4_input a_block = NTTToPolyMultNegPipe::read();
+            using PipeSet = CKKS_PIPE_SET<P>;
+            u32x4_input a_block = PipeSet::NTTToPolyMultNegPipe::read();
                 u32x4_input b_block = b_blocks[blk];
                 u32x4_input out_block{};
 
@@ -82,8 +87,11 @@ public:
                     reinterpret_cast<uint32_t*>(&out_block)[lane] = neg_result;
                 }
 
-                PolyMultNegToPolyAddModPipe::write(out_block);
+                PipeSet::PolyMultNegToPolyAddModPipe::write(out_block);
             }
         });
     }
 };
+
+// Backwards-compatible alias for pipeline P = 0.
+using PolyMultNegNTTKernel = PolyMultNegNTTKernelT<0>;

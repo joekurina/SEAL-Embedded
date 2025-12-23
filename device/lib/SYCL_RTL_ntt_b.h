@@ -8,20 +8,25 @@
 #include <cstdio>
 #include <cstdlib>
 
-// RTL NTT B Main Kernel
-class RTLNTTKernel_B {
+template <int P>
+class RTLNTTKernel_B_Task;
+
+// RTL NTT B Main Kernel (templated on pipeline index)
+template <int P>
+class RTLNTTKernel_BT {
 private:
 
 public:
-    RTLNTTKernel_B() {}
+    RTLNTTKernel_BT() {}
 
     void operator()(sycl::handler& h) const {
-        h.single_task<class RTLNTTKernel_B>([=]() [[intel::kernel_args_restrict]] {
+        h.single_task<RTLNTTKernel_B_Task<P>>([=]() [[intel::kernel_args_restrict]] {
 #ifdef FPGA_EMULATOR
             // Create RTL instance for emulator mode
             reg_test_verifyNTT_multi_DUT* instance = the_nwc_4k_ntt_new_instance();
 #endif
 
+            size_t output_counter = 0;
             // Calculate number of structs to process (4K points = 1024 structs)
             size_t num_structs = NTT_RTL_CAPACITY;
 
@@ -30,13 +35,14 @@ public:
 
             // Process data structures through the RTL
             [[intel::initiation_interval(1)]]
-            while (1) {
+            while (output_counter < num_structs) {
                 // Read from input pipe (non-blocking)
                 bool input_valid = false;
                 bool mod_sel_valid = false;
 
-                NTT_RTL_Input_Data pipe_input = NTTBInputPipe::read(input_valid);
-                uint8_t kernel_mod_selector = NTTBModSelectorPipe::read(mod_sel_valid);
+                using PipeSet = NTT_PIPE_SET<P>;
+                NTT_RTL_Input_Data pipe_input = PipeSet::NTTBInputPipe::read(input_valid);
+                uint8_t kernel_mod_selector = PipeSet::NTTBModSelectorPipe::read(mod_sel_valid);
 
                 // If no valid input, exit the loop
                 //if (!input_valid) break;
@@ -66,7 +72,8 @@ public:
                     pipe_output.port_out_q_3 = rtl_output.port_out_q_3;
 
                     // Write to output pipe
-                    NTTBOutputPipe::write(pipe_output);
+                    PipeSet::NTTBOutputPipe::write(pipe_output);
+                    output_counter++;
                 }
             }
 #ifdef FPGA_EMULATOR
@@ -75,4 +82,7 @@ public:
 #endif
         }); // End single_task lambda
     } // End operator()
-}; // End RTLNTTKernel_B class
+}; // End RTLNTTKernel_BT class
+
+// Backwards-compatible alias for pipeline P = 0.
+using RTLNTTKernel_B = RTLNTTKernel_BT<0>;

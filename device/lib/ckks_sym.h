@@ -164,3 +164,22 @@ void ckks_combined_encode_encrypt_sym(
     complex_double *encoding_buffer,
     uint16_t *index_map
 );
+
+// Pipeline-indexed entry to enable concurrent SYCL launches on distinct pipe sets.
+void ckks_combined_encode_encrypt_sym_pipeline(
+    int pipeline_index,
+    const Parms *parms,
+    const flpt *values,
+    size_t values_len,
+    SE_PRNG *shareable_prng,
+    SE_PRNG *error_prng,
+    ZZ *s_small,
+    ZZ *ntt_pte,
+    ZZ *ntt_roots,
+    ZZ *c0_s,
+    ZZ *c1,
+    ZZ *s_save,
+    ZZ *c1_save,
+    complex_double *encoding_buffer,
+    uint16_t *index_map
+);

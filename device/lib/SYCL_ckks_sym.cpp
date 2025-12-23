@@ -50,18 +50,6 @@ static inline void unpack4(const std::vector<Struct4>& src, size_t n, Scalar* ds
     }
 }
 
-// Forward declare kernel names
-class IFFTKernel;
-class RTLNTTKernel_A_Input;
-class RTLNTTKernel_A;
-class RTLNTTKernel_A_Output;
-class RTLNTTKernel_B_Input;
-class RTLNTTKernel_B;
-class RTLNTTKernel_B_Output;
-class PolyMultNegNTTKernel;
-class PolyAddModKernel;
-class ScaleAndReduceKernel;
-
 // Modulus selector function
 inline uint8_t get_rtl_modulus_selector(uint32_t mod_value) {
     switch(mod_value) {
@@ -76,8 +64,9 @@ inline uint8_t get_rtl_modulus_selector(uint32_t mod_value) {
 }
 
 // Forward declare pipeline function
-void pipeline(
-    queue q,
+template <int P>
+std::vector<event> pipeline(
+    queue &q,
     size_t n,
     size_t logn,
     double scale,
@@ -95,42 +84,34 @@ void pipeline(
 // Forward declare NTT root calculation function
 uint32_t NTT_root(size_t n, uint32_t mod_val);
 
-// Implementation of the C-compatible function (Main host interface)
-extern "C" void SYCL_combined_encrypt(
-    // --- CKKS Parameters ---
-    size_t n,                       // Polynomial degree.
-    size_t logn,                    // Base-2 logarithm of the polynomial degree.
-    double scale,                   // CKKS scaling factor.
+// Internal templated implementation selectable by pipeline index
+template <int P>
+static void SYCL_combined_encrypt_impl(
+    size_t n,
+    size_t logn,
+    double scale,
+    uint32_t mod_value,
+    const uint32_t* const_ratio,
+    complex_double* encoding_buffer,
+    uint32_t* expanded_s,
+    uint32_t* uniform_poly,
+    int8_t* error_samples,
+    int64_t* pt_with_error,
+    uint32_t* ntt_pte,
+    uint32_t* c0_s,
+    uint32_t* c1,
+    uint32_t* s_save,
+    uint32_t* c1_save)
+{
+    (void)pt_with_error;
+    if (n % 4 != 0)
+    {
+        std::cerr << "[SYCL_combined_encrypt] polynomial degree must be divisible by 4 for 4-lane normalization\n";
+        std::exit(1);
+    }
 
-    // --- Modulus Information ---
-    uint32_t mod_value,             // Current modulus prime (q).
-    const uint32_t* const_ratio,    // Precomputed constant ratio for Barrett reduction modulo q.
-
-    // --- Input Data Buffers (Host Pointers) ---
-    complex_double* encoding_buffer, // Input: Buffer holding complex-encoded plaintext values (fed to IFFTKernel).
-    uint32_t* expanded_s,           // Input: Expanded secret key polynomial 's'.
-    uint32_t* uniform_poly,         // Input: Uniformly sampled polynomial 'a' (becomes ciphertext component c1).
-    int8_t* error_samples,          // Input: Buffer holding pre-sampled noise/error values.
-    int64_t* pt_with_error,         // Input (UNUSED): Previously held plaintext+error; now unused by the SYCL pipeline.
-
-    // --- Input/Output & Scratch Buffers (Host Pointers) ---
-    uint32_t* ntt_pte,              // Intermediate/Scratch: Output buffer for ScaleAndReduce, then Input/Output buffer for NTTKernel_1. Holds NTT(plaintext + error).
-    uint32_t* c0_s,                 // Input/Output: Starts with expanded_s, used for NTT(s), then -(NTT(s)*c1), finally holds the resulting ciphertext component c0.
-    uint32_t* c1,                   // Output: Destination for the uniform polynomial 'a', becomes ciphertext component c1.
-
-    // --- Output Buffers for Testing (Host Pointers) ---
-    uint32_t* s_save,               // Output: Destination buffer for saving the NTT(s) state from NTTKernel_2. NULL if not needed.
-    uint32_t* c1_save               // Output: Destination buffer for saving the original uniform polynomial 'a'. NULL if not needed.
-) {
-     if (n % 4 != 0) {
-          std::cerr << "[SYCL_combined_encrypt] polynomial degree must be divisible by 4 for 4-lane normalization\n";
-          std::exit(1);
-     }
-    
-    // Calculate the NTT root
     uint32_t root = NTT_root(n, mod_value);
 
-    // Normalize inputs into 4-lane blocks (host-side only).
     std::vector<encoding_buffer_input> encoding_blocks;
     std::vector<u32x4_input> s_blocks;
     std::vector<u32x4_input> a_blocks;
@@ -146,43 +127,29 @@ extern "C" void SYCL_combined_encrypt(
     pack4(error_samples, n, error_blocks);
     pack4(ntt_pte, n, ntt_pte_blocks);
 
-    // Initialize working copies
-    c0_s_blocks = s_blocks; // start from expanded_s
-    c1_blocks = a_blocks;   // uniform_poly
-    if (s_save) {
+    c0_s_blocks = s_blocks;
+    c1_blocks   = a_blocks;
+    if (s_save)
+    {
         pack4(s_save, n, s_save_blocks);
-    } else {
-        s_save_blocks.resize(n / 4); // provide valid storage even when not requested
+    }
+    else
+    {
+        s_save_blocks.resize(n / 4);
     }
 
-    // If requested, save original c1.
-    if (c1_save != nullptr) {
+    if (c1_save != nullptr)
+    {
         unpack4(a_blocks, n, c1_save);
     }
 
-    // Create SYCL buffers that associate host memory pointers with device-accessible objects.
-    // Data will be implicitly managed (copied to/from device) by the SYCL runtime as needed by kernel accessors.
-
-    // Buffer for the input complex-encoded plaintext values. Read by IFFTKernel.
-    // IFFT now consumes packed 4-lane structs
     buffer<encoding_buffer_input, 1> encoding_buf(encoding_blocks.data(), range(n / 4));
-
-    // Buffer for the input error samples (packed 4-lane).
     buffer<i8x4_input, 1> error_samples_buf(error_blocks.data(), range(n / 4));
-
-    // Buffer used for intermediate storage and NTT of plaintext+error (packed).
     buffer<u32x4_input, 1> ntt_pte_buf(ntt_pte_blocks.data(), range(n / 4));
-
-    // Main working buffer for ciphertext component c0 (packed).
     buffer<u32x4_input, 1> c0_s_buf(c0_s_blocks.data(), range(n / 4));
-
-    // Input buffer holding the uniform polynomial 'a' (ciphertext component c1) (packed).
     buffer<u32x4_input, 1> c1_buf(c1_blocks.data(), range(n / 4));
-
-    // Buffer for optionally saving the NTT(s) state (packed). Always back by valid storage.
     buffer<u32x4_input, 1> s_save_buf(s_save_blocks.data(), range(n / 4));
 
-    // Create queue
 #if FPGA_HARDWARE
     auto selector = ext::intel::fpga_selector_v;
 #else
@@ -190,8 +157,7 @@ extern "C" void SYCL_combined_encrypt(
 #endif
     queue q{selector, property::queue::enable_profiling()};
 
-    // Execute the full pipeline
-    pipeline(
+    auto events = pipeline<P>(
         q,
         n,
         logn,
@@ -204,21 +170,94 @@ extern "C" void SYCL_combined_encrypt(
         ntt_pte_buf,
         c0_s_buf,
         c1_buf,
-        s_save_buf
-    );
+        s_save_buf);
 
-    // Results are now in packed vectors; unpack back to caller buffers.
+    for (auto &ev : events)
+    {
+        ev.wait();
+    }
+
     unpack4(c0_s_blocks, n, c0_s);
     unpack4(ntt_pte_blocks, n, ntt_pte);
     unpack4(c1_blocks, n, c1);
-    if (s_save && !s_save_blocks.empty()) {
+    if (s_save && !s_save_blocks.empty())
+    {
         unpack4(s_save_blocks, n, s_save);
     }
 }
 
+// Implementation of the C-compatible function (Main host interface)
+extern "C" void SYCL_combined_encrypt(
+    size_t n,
+    size_t logn,
+    double scale,
+    uint32_t mod_value,
+    const uint32_t* const_ratio,
+    complex_double* encoding_buffer,
+    uint32_t* expanded_s,
+    uint32_t* uniform_poly,
+    int8_t* error_samples,
+    int64_t* pt_with_error,
+    uint32_t* ntt_pte,
+    uint32_t* c0_s,
+    uint32_t* c1,
+    uint32_t* s_save,
+    uint32_t* c1_save)
+{
+    SYCL_combined_encrypt_impl<0>(n, logn, scale, mod_value, const_ratio, encoding_buffer, expanded_s,
+                                  uniform_poly, error_samples, pt_with_error, ntt_pte, c0_s, c1,
+                                  s_save, c1_save);
+}
+
+extern "C" void SYCL_combined_encrypt_pipeline(
+    int pipeline_index,
+    size_t n,
+    size_t logn,
+    double scale,
+    uint32_t mod_value,
+    const uint32_t* const_ratio,
+    complex_double* encoding_buffer,
+    uint32_t* expanded_s,
+    uint32_t* uniform_poly,
+    int8_t* error_samples,
+    int64_t* pt_with_error,
+    uint32_t* ntt_pte,
+    uint32_t* c0_s,
+    uint32_t* c1,
+    uint32_t* s_save,
+    uint32_t* c1_save)
+{
+    switch (pipeline_index)
+    {
+        case 0:
+            SYCL_combined_encrypt_impl<0>(n, logn, scale, mod_value, const_ratio, encoding_buffer, expanded_s,
+                                          uniform_poly, error_samples, pt_with_error, ntt_pte, c0_s, c1,
+                                          s_save, c1_save);
+            break;
+        case 1:
+            SYCL_combined_encrypt_impl<1>(n, logn, scale, mod_value, const_ratio, encoding_buffer, expanded_s,
+                                          uniform_poly, error_samples, pt_with_error, ntt_pte, c0_s, c1,
+                                          s_save, c1_save);
+            break;
+        case 2:
+            SYCL_combined_encrypt_impl<2>(n, logn, scale, mod_value, const_ratio, encoding_buffer, expanded_s,
+                                          uniform_poly, error_samples, pt_with_error, ntt_pte, c0_s, c1,
+                                          s_save, c1_save);
+            break;
+        default:
+            std::cerr << "[SYCL_combined_encrypt_pipeline] invalid pipeline index " << pipeline_index
+                      << ", defaulting to 0\n";
+            SYCL_combined_encrypt_impl<0>(n, logn, scale, mod_value, const_ratio, encoding_buffer, expanded_s,
+                                          uniform_poly, error_samples, pt_with_error, ntt_pte, c0_s, c1,
+                                          s_save, c1_save);
+            break;
+    }
+}
+
 // Integrated pipeline function with modified NTTKernel_2 call
-void pipeline(
-    queue q,                                        // The SYCL queue for submitting kernels.
+template <int P>
+std::vector<event> pipeline(
+    queue &q,                                       // The SYCL queue for submitting kernels.
     size_t n,                                       // The polynomial degree.
     size_t logn,                                    // Base-2 logarithm of the polynomial degree.
     double scale,                                   // The CKKS scaling factor.
@@ -233,71 +272,68 @@ void pipeline(
     buffer<u32x4_input, 1>& s_save_buf               // Output buffer: Destination for saving the NTT(s) state (packed 4-lane).
 ) {
     uint8_t modulus_selector = get_rtl_modulus_selector(mod_value);
-    std::cout << "[Pipeline] Using modulus selector: " << static_cast<int>(modulus_selector) << " for modulus " << mod_value << std::endl;
+    //std::cout << "[Pipeline] Using modulus selector: " << static_cast<int>(modulus_selector) << " for modulus " << mod_value << std::endl;
     try {
 
-        // Submit consumers first to avoid pipe deadlocks; track only finite kernels for waiting.
-        std::vector<event> finite_events;
+        // Submit consumers first to avoid pipe deadlocks; track all events for caller-controlled waits.
+        std::vector<event> events;
 
-        // RTL NTT A Output: reads from NTTAOutputPipe, writes to NTTToPolyMultNegPipe (finite)
-        finite_events.push_back(q.submit([&](handler &h) {
-            RTLNTTKernel_A_Output kernel(n, s_save_buf);
+        // RTL NTT A Output: reads from NTTAOutputPipe, writes to NTTToPolyMultNegPipe
+        events.push_back(q.submit([&](handler &h) {
+            RTLNTTKernel_A_OutputT<P> kernel(n, s_save_buf);
             kernel(h);
         }));
 
-        // RTL NTT A Main: infinite loop; do not wait on this event
-        q.submit([&](handler &h) {
-            RTLNTTKernel_A kernel{};
-            kernel(h);
-        });
-
-        // RTL NTT A Input: feeds secret key into NTT A (finite)
-        finite_events.push_back(q.submit([&](handler &h) {
-            RTLNTTKernel_A_Input(n, modulus_selector, c0_s_buf)(h);
-        }));
-
-        // PolyMultNegNTTKernel (finite)
-        finite_events.push_back(q.submit([&](handler &h) {
-            PolyMultNegNTTKernel(n, mod_value, const_ratio, c1_buf)(h);
-        }));
-
-        // IFFTKernel (finite)
-        finite_events.push_back(q.submit([&](handler &h) {
-            IFFTKernel(n, logn, encoding_buf)(h);
-        }));
-
-        // ScaleAndReduceKernel (finite)
-        finite_events.push_back(q.submit([&](handler &h) {
-            ScaleAndReduceKernel(n, scale, mod_value, const_ratio, error_samples_buf)(h);
-        }));
-
-        // RTL NTT B Output (finite)
-        finite_events.push_back(q.submit([&](handler &h) {
-            RTLNTTKernel_B_Output kernel(n, ntt_pte_buf);
+        // RTL NTT A Main
+        events.push_back(q.submit([&](handler &h) {
+            RTLNTTKernel_AT<P> kernel{};
             kernel(h);
         }));
 
-        // RTL NTT B Main: infinite loop; do not wait on this event
-        q.submit([&](handler &h) {
-            RTLNTTKernel_B kernel{};
-            kernel(h);
-        });
+        // RTL NTT A Input: feeds secret key into NTT A
+        events.push_back(q.submit([&](handler &h) {
+            RTLNTTKernel_A_InputT<P>(n, modulus_selector, c0_s_buf)(h);
+        }));
 
-        // RTL NTT B Input (finite)
-        finite_events.push_back(q.submit([&](handler &h) {
-            RTLNTTKernel_B_Input kernel(n, modulus_selector);
+        // PolyMultNegNTTKernel
+        events.push_back(q.submit([&](handler &h) {
+            PolyMultNegNTTKernelT<P>(n, mod_value, const_ratio, c1_buf)(h);
+        }));
+
+        // IFFTKernel
+        events.push_back(q.submit([&](handler &h) {
+            IFFTKernelT<P>(n, logn, encoding_buf)(h);
+        }));
+
+        // ScaleAndReduceKernel
+        events.push_back(q.submit([&](handler &h) {
+            ScaleAndReduceKernelT<P>(n, scale, mod_value, const_ratio, error_samples_buf)(h);
+        }));
+
+        // RTL NTT B Output
+        events.push_back(q.submit([&](handler &h) {
+            RTLNTTKernel_B_OutputT<P> kernel(n, ntt_pte_buf);
             kernel(h);
         }));
 
-        // PolyAddModKernel (finite, final write-out of c0_s_buf)
-        finite_events.push_back(q.submit([&](handler &h) {
-            PolyAddModKernel(n, mod_value, c0_s_buf)(h);
+        // RTL NTT B Main
+        events.push_back(q.submit([&](handler &h) {
+            RTLNTTKernel_BT<P> kernel{};
+            kernel(h);
         }));
 
-        // Wait only on finite kernels to ensure outputs are ready, while not blocking on infinite RTL mains.
-        for (auto &ev : finite_events) {
-            ev.wait();
-        }
+        // RTL NTT B Input
+        events.push_back(q.submit([&](handler &h) {
+            RTLNTTKernel_B_InputT<P> kernel(n, modulus_selector);
+            kernel(h);
+        }));
+
+        // PolyAddModKernel (final write-out of c0_s_buf)
+        events.push_back(q.submit([&](handler &h) {
+            PolyAddModKernelT<P>(n, mod_value, c0_s_buf)(h);
+        }));
+
+        return events;
 
     } catch (std::exception const &e) { // Catch other standard exceptions
         std::cout << "[Pipeline] STANDARD EXCEPTION CAUGHT!" << std::endl;
@@ -305,6 +341,7 @@ void pipeline(
                   << e.what() << std::endl;
         std::exit(1);
     }
+    return {};
 } // End of pipeline function
 
 uint32_t NTT_root(std::size_t n, uint32_t mod_val)

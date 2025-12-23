@@ -33,22 +33,34 @@ typedef struct
 constexpr size_t NTT_RTL_CAPACITY = 1024;
 
 // SYCL Pipe class definitions for NTT RTL kernels
-// These pipes connect the RTL pipeline
+// These pipes connect the RTL pipeline. We template on pipeline index P to allow
+// multiple independent pipelines (P = 0,1,2, ...).
 
-// Forward declarations for pipe name classes
-class NTTAInputPipeName;
-class NTTAModSelectorPipeName;
-class NTTAOutputPipeName;
-class NTTBInputPipeName;
-class NTTBModSelectorPipeName;
-class NTTBOutputPipeName;
+template <int P>
+struct NTT_PIPE_SET
+{
+    struct NTTAInputPipeName { static constexpr int id = P; };
+    struct NTTAModSelectorPipeName { static constexpr int id = P; };
+    struct NTTAOutputPipeName { static constexpr int id = P; };
+    struct NTTBInputPipeName { static constexpr int id = P; };
+    struct NTTBModSelectorPipeName { static constexpr int id = P; };
+    struct NTTBOutputPipeName { static constexpr int id = P; };
 
-// Internal NTT A Pipeline Pipes (between the 3 NTT A stages)
-using NTTAInputPipe = sycl::ext::intel::pipe<NTTAInputPipeName, NTT_RTL_Input_Data, NTT_RTL_CAPACITY>;
-using NTTAModSelectorPipe = sycl::ext::intel::pipe<NTTAModSelectorPipeName, uint8_t, NTT_RTL_CAPACITY>;
-using NTTAOutputPipe = sycl::ext::intel::pipe<NTTAOutputPipeName, NTT_RTL_Output_Data, NTT_RTL_CAPACITY>;
+    // Internal NTT A Pipeline Pipes (between the 3 NTT A stages)
+    using NTTAInputPipe = sycl::ext::intel::pipe<NTTAInputPipeName, NTT_RTL_Input_Data, NTT_RTL_CAPACITY>;
+    using NTTAModSelectorPipe = sycl::ext::intel::pipe<NTTAModSelectorPipeName, uint8_t, NTT_RTL_CAPACITY>;
+    using NTTAOutputPipe = sycl::ext::intel::pipe<NTTAOutputPipeName, NTT_RTL_Output_Data, NTT_RTL_CAPACITY>;
 
-// Internal NTT B Pipeline Pipes (between the 3 NTT B stages)
-using NTTBInputPipe = sycl::ext::intel::pipe<NTTBInputPipeName, NTT_RTL_Input_Data, NTT_RTL_CAPACITY>;
-using NTTBModSelectorPipe = sycl::ext::intel::pipe<NTTBModSelectorPipeName, uint8_t, NTT_RTL_CAPACITY>;
-using NTTBOutputPipe = sycl::ext::intel::pipe<NTTBOutputPipeName, NTT_RTL_Output_Data, NTT_RTL_CAPACITY>;
+    // Internal NTT B Pipeline Pipes (between the 3 NTT B stages)
+    using NTTBInputPipe = sycl::ext::intel::pipe<NTTBInputPipeName, NTT_RTL_Input_Data, NTT_RTL_CAPACITY>;
+    using NTTBModSelectorPipe = sycl::ext::intel::pipe<NTTBModSelectorPipeName, uint8_t, NTT_RTL_CAPACITY>;
+    using NTTBOutputPipe = sycl::ext::intel::pipe<NTTBOutputPipeName, NTT_RTL_Output_Data, NTT_RTL_CAPACITY>;
+};
+
+// Backwards-compatible aliases for the default pipeline instance (P = 0).
+using NTTAInputPipe = typename NTT_PIPE_SET<0>::NTTAInputPipe;
+using NTTAModSelectorPipe = typename NTT_PIPE_SET<0>::NTTAModSelectorPipe;
+using NTTAOutputPipe = typename NTT_PIPE_SET<0>::NTTAOutputPipe;
+using NTTBInputPipe = typename NTT_PIPE_SET<0>::NTTBInputPipe;
+using NTTBModSelectorPipe = typename NTT_PIPE_SET<0>::NTTBModSelectorPipe;
+using NTTBOutputPipe = typename NTT_PIPE_SET<0>::NTTBOutputPipe;

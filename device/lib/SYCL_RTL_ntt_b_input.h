@@ -8,25 +8,30 @@
 #include <cstdio>
 #include <cstdlib>
 
-// RTL NTT B Input Kernel
-class RTLNTTKernel_B_Input {
+template <int P>
+class RTLNTTKernel_B_Input_Task;
+
+// RTL NTT B Input Kernel (templated on pipeline index)
+template <int P>
+class RTLNTTKernel_B_InputT {
 private:
     size_t n;                   // Number of elements to process
     uint8_t mod_sel;            // Modulus selector
 
 public:
-    RTLNTTKernel_B_Input(size_t n_val, uint8_t mod_selector) : n(n_val), mod_sel(mod_selector)  {}
+    RTLNTTKernel_B_InputT(size_t n_val, uint8_t mod_selector) : n(n_val), mod_sel(mod_selector)  {}
 
     void operator()(sycl::handler& h) const {
         // Capture necessary variables
         size_t kernel_n = n;
         uint8_t kernel_mod_sel = mod_sel;
 
-        h.single_task<class RTLNTTKenel_B_Input>([=]() [[intel::kernel_args_restrict]] {
+        h.single_task<RTLNTTKernel_B_Input_Task<P>>([=]() [[intel::kernel_args_restrict]] {
             size_t num_structs = kernel_n / 4;
 
             for (size_t blk = 0; blk < num_structs; ++blk) {
-                u32x4_input packed = ScaleReduceToNTTBPipe::read();
+                using PipeSet = CKKS_PIPE_SET<P>;
+                u32x4_input packed = PipeSet::ScaleReduceToNTTBPipe::read();
 
                 NTT_RTL_Input_Data rtl_input;
                 rtl_input.port_x_in_0 = static_cast<int32_t>(packed.element0);
@@ -34,9 +39,13 @@ public:
                 rtl_input.port_x_in_2 = static_cast<int32_t>(packed.element2);
                 rtl_input.port_x_in_3 = static_cast<int32_t>(packed.element3);
 
-                NTTBModSelectorPipe::write(kernel_mod_sel);
-                NTTBInputPipe::write(rtl_input);
+                using NttPipes = NTT_PIPE_SET<P>;
+                NttPipes::NTTBModSelectorPipe::write(kernel_mod_sel);
+                NttPipes::NTTBInputPipe::write(rtl_input);
             }
         }); // End single_task lambda
     } // End operator()
-}; // End RTLNTTKernel_B_Input class
+}; // End RTLNTTKernel_B_InputT class
+
+// Backwards-compatible alias for pipeline P = 0.
+using RTLNTTKernel_B_Input = RTLNTTKernel_B_InputT<0>;
