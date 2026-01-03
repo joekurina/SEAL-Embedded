@@ -72,7 +72,8 @@ std::vector<event> pipeline(
     double scale,
     uint32_t mod_value,
     uint32_t root,
-    const uint32_t* const_ratio,
+    uint32_t const_ratio0,
+    uint32_t const_ratio1,
     buffer<encoding_buffer_input, 1>& encoding_buf,
     buffer<i8x4_input, 1>& error_samples_buf,
     buffer<u32x4_input, 1>& ntt_pte_buf,
@@ -104,6 +105,11 @@ static void SYCL_combined_encrypt_impl(
     uint32_t* c1_save)
 {
     (void)pt_with_error;
+    if (!const_ratio)
+    {
+        std::cerr << "[SYCL_combined_encrypt] const_ratio must not be null\n";
+        std::exit(1);
+    }
     if (n % 4 != 0)
     {
         std::cerr << "[SYCL_combined_encrypt] polynomial degree must be divisible by 4 for 4-lane normalization\n";
@@ -152,6 +158,8 @@ static void SYCL_combined_encrypt_impl(
 
 #if FPGA_HARDWARE
     auto selector = ext::intel::fpga_selector_v;
+#elif FPGA_SIMULATOR
+    auto selector = ext::intel::fpga_simulator_selector_v;
 #else
     auto selector = ext::intel::fpga_emulator_selector_v;
 #endif
@@ -164,7 +172,8 @@ static void SYCL_combined_encrypt_impl(
         scale,
         mod_value,
         root,
-        const_ratio,
+        const_ratio[0],
+        const_ratio[1],
         encoding_buf,
         error_samples_buf,
         ntt_pte_buf,
@@ -263,7 +272,8 @@ std::vector<event> pipeline(
     double scale,                                   // The CKKS scaling factor.
     uint32_t mod_value,                             // The modulus value (q).
     uint32_t root,                                  // The NTT root for the polynomial ring.
-    const uint32_t* const_ratio,                    // Precomputed constant ratio for Barrett reduction modulo q.
+    uint32_t const_ratio0,                          // Barrett reduction constant ratio low word
+    uint32_t const_ratio1,                          // Barrett reduction constant ratio high word
     buffer<encoding_buffer_input, 1>& encoding_buf,  // Input buffer: Complex-encoded plaintext values (packed 4-lane).
     buffer<i8x4_input, 1>& error_samples_buf,        // Input buffer: Noise/error samples (packed 4-lane).
     buffer<u32x4_input, 1>& ntt_pte_buf,             // Buffer for NTT(plaintext + error) (packed 4-lane).
@@ -297,7 +307,7 @@ std::vector<event> pipeline(
 
         // PolyMultNegNTTKernel
         events.push_back(q.submit([&](handler &h) {
-            PolyMultNegNTTKernelT<P>(n, mod_value, const_ratio, c1_buf)(h);
+            PolyMultNegNTTKernelT<P>(n, mod_value, const_ratio0, const_ratio1, c1_buf)(h);
         }));
 
         // IFFTKernel
@@ -307,7 +317,7 @@ std::vector<event> pipeline(
 
         // ScaleAndReduceKernel
         events.push_back(q.submit([&](handler &h) {
-            ScaleAndReduceKernelT<P>(n, scale, mod_value, const_ratio, error_samples_buf)(h);
+            ScaleAndReduceKernelT<P>(n, scale, mod_value, const_ratio0, const_ratio1, error_samples_buf)(h);
         }));
 
         // RTL NTT B Output

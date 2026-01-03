@@ -178,8 +178,13 @@ void SYCL_test_ckks_sym_base(size_t n, size_t nprimes, bool test_message)
     for (size_t i = 1; i < pipeline_count; ++i) {
         memcpy(s[i], s[0], s_buf_size * sizeof(ZZ));
     }
-    // size_t s_size = parms.small_s ? n / 16 : n; // This was from original, use s_buf_size
-    if (encode_only) clear(s, s_buf_size);
+    // size_t s_size = parms.small_s ? n / 16 : n; 
+    // // This was from original, use s_buf_size
+    if (encode_only) {
+        for (size_t i = 0; i < pipeline_count; ++i) {
+            clear(s[i], s_buf_size);
+        }
+    }
 
     // --- Run Tests ---
     for (size_t testnum = 0; testnum < 9; testnum++)
@@ -264,6 +269,8 @@ void SYCL_test_ckks_sym_base(size_t n, size_t nprimes, bool test_message)
                     temp_test_mem);
                 if (!success) {
                     test_failed = true;
+                } else {
+                    printf("OK!\n");
                 }
             }
 

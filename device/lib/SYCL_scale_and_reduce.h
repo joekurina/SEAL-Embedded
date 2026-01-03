@@ -17,18 +17,21 @@ private:
     size_t n;
     double scale;
     uint32_t mod_value;
-    const uint32_t* const_ratio;
+    uint32_t const_ratio0;
+    uint32_t const_ratio1;
     mutable sycl::buffer<i8x4_input, 1> error_samples_acc;
 
 public:
     // Constructor takes combined arguments
-        ScaleAndReduceKernelT(size_t n_val, double scale_val, uint32_t mod_val,
-                                                    const uint32_t* const_ratio_val,
-                                                    sycl::buffer<i8x4_input, 1>& error_samples_buf)
+                ScaleAndReduceKernelT(size_t n_val, double scale_val, uint32_t mod_val,
+                                                                                                        uint32_t const_ratio0_val,
+                                                                                                        uint32_t const_ratio1_val,
+                                                                                                        sycl::buffer<i8x4_input, 1>& error_samples_buf)
         : n(n_val),
           scale(scale_val),
           mod_value(mod_val),
-          const_ratio(const_ratio_val), 
+                    const_ratio0(const_ratio0_val),
+                    const_ratio1(const_ratio1_val),
           error_samples_acc(error_samples_buf) {}
 
     void operator()(sycl::handler& h) const 
@@ -40,7 +43,8 @@ public:
         size_t kernel_n = n; 
         double kernel_scale = scale;
         uint32_t kernel_mod_val = mod_value;
-        const uint32_t* kernel_const_ratio = const_ratio;
+        uint32_t kernel_const_ratio0 = const_ratio0;
+        uint32_t kernel_const_ratio1 = const_ratio1;
 
         h.single_task<ScaleAndReduceKernelTask<P>>([=]() [[intel::kernel_args_restrict]] 
         {
@@ -72,12 +76,12 @@ public:
 
                     uint32_t right_hw;
                     {
-                        uint64_t res_temp = (uint64_t)coeff_abs_vec[0] * (uint64_t)kernel_const_ratio[0];
+                        uint64_t res_temp = (uint64_t)coeff_abs_vec[0] * (uint64_t)kernel_const_ratio0;
                         right_hw = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
                     }
                     uint32_t middle_temp[2];
                     {
-                        uint64_t res_temp = (uint64_t)coeff_abs_vec[0] * (uint64_t)kernel_const_ratio[1];
+                        uint64_t res_temp = (uint64_t)coeff_abs_vec[0] * (uint64_t)kernel_const_ratio1;
                         middle_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
                         middle_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
                     }
@@ -91,7 +95,7 @@ public:
 
                     uint32_t middle2_temp[2];
                     {
-                        uint64_t res_temp = (uint64_t)coeff_abs_vec[1] * (uint64_t)kernel_const_ratio[0];
+                        uint64_t res_temp = (uint64_t)coeff_abs_vec[1] * (uint64_t)kernel_const_ratio0;
                         middle2_temp[0] = (uint32_t)(res_temp & 0xFFFFFFFF);
                         middle2_temp[1] = (uint32_t)((res_temp >> 32) & 0xFFFFFFFF);
                     }
@@ -102,7 +106,7 @@ public:
                         middle2_lw_carry = (uint8_t)(middle2_lw < middle_lw);
                     }
                     uint32_t middle2_hw = middle2_temp[1] + middle2_lw_carry;
-                    uint32_t tmp = coeff_abs_vec[1] * kernel_const_ratio[1] + middle_hw + middle2_hw;
+                    uint32_t tmp = coeff_abs_vec[1] * kernel_const_ratio1 + middle_hw + middle2_hw;
 
                     tmp = coeff_abs_vec[0] - tmp * kernel_mod_val;
 

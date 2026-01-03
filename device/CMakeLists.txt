@@ -19,7 +19,12 @@ set(BASE_CXX_FLAGS "-fsycl -std=c++17 -Rno-debug-disables-optimization -DCSL_USE
 set(REPORT_COMPILE_FLAGS "-fintelfpga")
 set(REPORT_LINK_FLAGS "-Xshardware -Xstarget=${FPGA_DEVICE} -fsycl-link=early")
 
+# --- Emulator-specific Flags ---
 set(EMULATOR_COMPILE_FLAGS "-fintelfpga -DFPGA_EMULATOR")
+
+# --- Simulator-specific Flags ---
+set(SIMULATOR_COMPILE_FLAGS "-fintelfpga -DFPGA_SIMULATOR -Xssimulation")
+set(SIMULATOR_LINK_FLAGS "-fintelfpga -Xssimulation")
 
 project(SEAL_EMBEDDED VERSION 1.1.0 LANGUAGES C CXX ASM)
 
@@ -31,11 +36,13 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(SE_ADAPTER_FILE_OUTPUT_DIR ${CMAKE_CURRENT_LIST_DIR}/adapter_output_data CACHE STRING "Adapter file directory" FORCE)
 message(STATUS "Adapter file directory: ${SE_ADAPTER_FILE_OUTPUT_DIR}")
 
-set(CMAKE_BUILD_TYPE_LIST Debug Release MinSizeRel RelWithDebInfo Report)
+set(CMAKE_BUILD_TYPE_LIST Debug Release MinSizeRel RelWithDebInfo Report Simulation)
 set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS ${CMAKE_BUILD_TYPE_LIST})
+
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type (choose from ${CMAKE_BUILD_TYPE_LIST})" FORCE)
 endif()
+
 message(STATUS "Build type (CMAKE_BUILD_TYPE): ${CMAKE_BUILD_TYPE}")
 
 set(CMAKE_C_FLAGS "${BASE_C_FLAGS}")
@@ -44,7 +51,13 @@ set(CMAKE_CXX_FLAGS "${BASE_CXX_FLAGS}")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS} ${EMULATOR_COMPILE_FLAGS}")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS} ${EMULATOR_COMPILE_FLAGS}")
 set(CMAKE_CXX_FLAGS_REPORT "${CMAKE_CXX_FLAGS} ${REPORT_COMPILE_FLAGS} -DFPGA_HARDWARE")
+set(CMAKE_CXX_FLAGS_SIMULATION "${CMAKE_CXX_FLAGS} ${SIMULATOR_COMPILE_FLAGS}")
+
 set(CMAKE_EXE_LINKER_FLAGS_REPORT "${REPORT_LINK_FLAGS}")
+
+set(CMAKE_EXE_LINKER_FLAGS_SIMULATION "${SIMULATOR_LINK_FLAGS}")
+set(CMAKE_SHARED_LINKER_FLAGS_SIMULATION "${SIMULATOR_LINK_FLAGS}")
+set(CMAKE_MODULE_LINKER_FLAGS_SIMULATION "${SIMULATOR_LINK_FLAGS}")
 
 # Force -O0 when linking with RTL library to avoid optimization conflicts
 set(CMAKE_EXE_LINKER_FLAGS "-O0")
@@ -101,8 +114,9 @@ target_include_directories(${TARGET_NAME} PUBLIC ${SE_ADAPTER_FILE_OUTPUT_DIR})
 target_include_directories(${TARGET_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/lib/rtl>)
 target_link_libraries(${TARGET_NAME} PRIVATE m)
-# Link RTL static library
-target_link_libraries(${TARGET_NAME} PRIVATE ${CMAKE_CURRENT_LIST_DIR}/lib/rtl/the_nwc_4k_ntt.a)
+# Link RTL static library (PUBLIC so consumers link it once via ${TARGET_NAME})
+set(SE_RTL_NTT_LIB ${CMAKE_CURRENT_LIST_DIR}/lib/rtl/the_nwc_4k_ntt.a)
+target_link_libraries(${TARGET_NAME} PUBLIC ${SE_RTL_NTT_LIB})
 
 if(NOT DEFINED SEAL_EMBEDDED_VERSION)
   set(SEAL_EMBEDDED_VERSION "1.1.0")
@@ -114,8 +128,6 @@ if(SE_BUILD_TYPE STREQUAL "Tests")
     if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/main.c")
         add_executable(seal_embedded_tests ${SE_TESTS_SOURCE_FILES})
         target_link_libraries(seal_embedded_tests PRIVATE m gcc_s c ${TARGET_NAME})
-        # Link RTL static library to tests
-        target_link_libraries(seal_embedded_tests PRIVATE ${CMAKE_CURRENT_LIST_DIR}/lib/rtl/the_nwc_4k_ntt.a)
     else()
         message(WARNING "Test sources not found, skipping test executable.")
     endif()
@@ -158,9 +170,15 @@ if(SE_BUILD_TYPE STREQUAL "Lib")
     )
 endif()
 
-add_compile_definitions(SE_DATA_PATH="${SE_ADAPTER_FILE_OUTPUT_DIR_DEVICE}")
-string(LENGTH "${SE_ADAPTER_FILE_OUTPUT_DIR_DEVICE}" SE_ADAPTER_FILE_OUTPUT_DIR_DEVICE_LEN)
-add_compile_definitions(SE_DATA_PATH_LEN=${SE_ADAPTER_FILE_OUTPUT_DIR_DEVICE_LEN})
+if(SE_BUILD_LOCAL)
+  set(SE_DATA_PATH_COMPILETIME "${SE_ADAPTER_FILE_OUTPUT_DIR}")
+else()
+  set(SE_DATA_PATH_COMPILETIME "${SE_ADAPTER_FILE_OUTPUT_DIR_DEVICE}")
+endif()
+
+add_compile_definitions(SE_DATA_PATH="${SE_DATA_PATH_COMPILETIME}")
+string(LENGTH "${SE_DATA_PATH_COMPILETIME}" SE_DATA_PATH_COMPILETIME_LEN)
+add_compile_definitions(SE_DATA_PATH_LEN=${SE_DATA_PATH_COMPILETIME_LEN})
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
   add_compile_definitions(SE_UNDEF_ASSERT_FORCE)
 endif()
