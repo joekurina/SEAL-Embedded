@@ -1,61 +1,45 @@
 #pragma once
 
-#include "SYCL_ckks_sym.h"
+#include "SYCL_common.h"
+#include "SYCL_pipes.h"
+#include "SYCL_data_types.h"
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
-#include "SYCL_pipes.h"
+
+namespace sycl_ckks {
 
 template <int P>
-class PolyAddModKernelTask;
+class PolyAddKernelTask;
 
-// Kernel for modular addition of two polynomials (templated on pipeline index)
 template <int P>
-class PolyAddModKernelT {
+class PolyAddKernel {
 private:
-    size_t n;
     uint32_t mod_value;
-    mutable sycl::buffer<u32x4_input, 1> output_acc;
 
 public:
-    PolyAddModKernelT(size_t n_val, uint32_t mod_val,
-                      sycl::buffer<u32x4_input, 1>& output_buf)
-        : n(n_val), mod_value(mod_val), output_acc(output_buf) {}
-    
+    PolyAddKernel(uint32_t mod) : mod_value(mod) {}
+
     void operator()(sycl::handler& h) const {
-        // Get access to the output buffer
-        auto output = output_acc.get_access<sycl::access::mode::write>(h);
-        
-        // Capture necessary variables
-        size_t kernel_n = n;
-        uint32_t kernel_mod_val = mod_value;
-        
-        h.single_task<PolyAddModKernelTask<P>>([=]() [[intel::kernel_args_restrict]] {
-            
-            // Process coefficients in packed 4-lane blocks
-            for (size_t blk = 0; blk < kernel_n / 4; ++blk) {
-                using PipeSet = CKKS_PIPE_SET<P>;
-                u32x4_input a_block = PipeSet::PolyMultNegToPolyAddModPipe::read();
-                u32x4_input b_block = PipeSet::NTTToAddModPipe::read();
+        uint32_t kernel_mod = mod_value;
 
-                u32x4_input out_block{};
+        h.single_task<PolyAddKernelTask<P>>([=]() [[intel::kernel_args_restrict]] {
+            using Pipes = PipeSet<P>;
 
-                for (size_t lane = 0; lane < 4; ++lane) {
-                    uint32_t coeff1 = reinterpret_cast<const uint32_t*>(&a_block)[lane];
-                    uint32_t coeff2 = reinterpret_cast<const uint32_t*>(&b_block)[lane];
+            [[intel::initiation_interval(1)]]
+            for (size_t blk = 0; blk < NUM_BLOCKS; ++blk) {
+                u32x4 neg_as = Pipes::PolyMultNegToPolyAddPipe::read();
+                u32x4 ntt_pte = Pipes::NTTBToPolyAddPipe::read();
 
-                    uint32_t sum = coeff1 + coeff2;
-                    int32_t is_ge_q = (int32_t)(sum >= kernel_mod_val);
-                    uint32_t mask = (uint32_t)(-is_ge_q);
-                    uint32_t result = sum - (kernel_mod_val & mask);
+                u32x4 out;
+                out.element0 = mod_add(neg_as.element0, ntt_pte.element0, kernel_mod);
+                out.element1 = mod_add(neg_as.element1, ntt_pte.element1, kernel_mod);
+                out.element2 = mod_add(neg_as.element2, ntt_pte.element2, kernel_mod);
+                out.element3 = mod_add(neg_as.element3, ntt_pte.element3, kernel_mod);
 
-                    reinterpret_cast<uint32_t*>(&out_block)[lane] = result;
-                }
-
-                output[blk] = out_block;
+                Pipes::PolyAddToExitPipe::write(out);
             }
         });
     }
 };
 
-// Backwards-compatible alias for pipeline P = 0.
-using PolyAddModKernel = PolyAddModKernelT<0>;
+}

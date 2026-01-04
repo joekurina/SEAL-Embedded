@@ -1,97 +1,63 @@
 #pragma once
 
-#include "SYCL_ckks_sym.h"
+#include "SYCL_common.h"
 #include "SYCL_pipes.h"
+#include "SYCL_data_types.h"
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
-template <int P>
-class PolyMultNegNTTKernelTask;
+namespace sycl_ckks {
 
-// Kernel: multiply pointwise in NTT domain and negate, operating on packed 4-lane blocks.
 template <int P>
-class PolyMultNegNTTKernelT {
+class PolyMultNegKernelTask;
+
+template <int P>
+class PolyMultNegKernel {
 private:
-    size_t n;
     uint32_t mod_value;
-    const uint32_t* const_ratio;              // Barrett reduction constants
-    mutable sycl::buffer<u32x4_input, 1> b_acc; // Input buffer packed
+    uint32_t const_ratio[2];
 
 public:
-    PolyMultNegNTTKernelT(size_t n_val, uint32_t mod_val, const uint32_t* const_ratio_val,
-                          sycl::buffer<u32x4_input, 1>& b_buf)
-        : n(n_val), mod_value(mod_val), const_ratio(const_ratio_val), b_acc(b_buf) {}
+    PolyMultNegKernel(uint32_t mod, const uint32_t* cr)
+        : mod_value(mod) {
+        const_ratio[0] = cr[0];
+        const_ratio[1] = cr[1];
+    }
 
     void operator()(sycl::handler& h) const {
-        auto b_blocks = b_acc.get_access<sycl::access::mode::read>(h);
+        uint32_t kernel_mod = mod_value;
+        uint32_t kernel_cr0 = const_ratio[0];
+        uint32_t kernel_cr1 = const_ratio[1];
 
-        size_t kernel_n = n;
-        uint32_t kernel_mod_val = mod_value;
-        const uint32_t* kernel_const_ratio = const_ratio;
+        h.single_task<PolyMultNegKernelTask<P>>([=]() [[intel::kernel_args_restrict]] {
+            using Pipes = PipeSet<P>;
+            uint32_t cr[2] = {kernel_cr0, kernel_cr1};
 
-        h.single_task<PolyMultNegNTTKernelTask<P>>([=]() [[intel::kernel_args_restrict]] {
-            for (size_t blk = 0; blk < kernel_n / 4; ++blk) {
-            using PipeSet = CKKS_PIPE_SET<P>;
-            u32x4_input a_block = PipeSet::NTTToPolyMultNegPipe::read();
-                u32x4_input b_block = b_blocks[blk];
-                u32x4_input out_block{};
+            [[intel::initiation_interval(1)]]
+            for (size_t blk = 0; blk < NUM_BLOCKS; ++blk) {
+                u32x4 ntt_s = Pipes::NTTAToPolyMultNegPipe::read();
+                u32x4 c1 = Pipes::EntryToPolyMultNegPipe::read();
 
-                for (size_t lane = 0; lane < 4; ++lane) {
-                    uint32_t a_val = reinterpret_cast<const uint32_t*>(&a_block)[lane];
-                    uint32_t b_val = reinterpret_cast<const uint32_t*>(&b_block)[lane];
+                uint64_t prod0 = static_cast<uint64_t>(ntt_s.element0) * static_cast<uint64_t>(c1.element0);
+                uint64_t prod1 = static_cast<uint64_t>(ntt_s.element1) * static_cast<uint64_t>(c1.element1);
+                uint64_t prod2 = static_cast<uint64_t>(ntt_s.element2) * static_cast<uint64_t>(c1.element2);
+                uint64_t prod3 = static_cast<uint64_t>(ntt_s.element3) * static_cast<uint64_t>(c1.element3);
 
-                    uint64_t wide = static_cast<uint64_t>(a_val) * static_cast<uint64_t>(b_val);
-                    uint32_t product[2];
-                    product[0] = static_cast<uint32_t>(wide & 0xFFFFFFFFu);
-                    product[1] = static_cast<uint32_t>((wide >> 32) & 0xFFFFFFFFu);
+                uint32_t red0 = barrett_reduce_u64(prod0, kernel_mod, cr);
+                uint32_t red1 = barrett_reduce_u64(prod1, kernel_mod, cr);
+                uint32_t red2 = barrett_reduce_u64(prod2, kernel_mod, cr);
+                uint32_t red3 = barrett_reduce_u64(prod3, kernel_mod, cr);
 
-                    uint32_t right_hw;
-                    {
-                        uint64_t rt_temp = static_cast<uint64_t>(product[0]) * static_cast<uint64_t>(kernel_const_ratio[0]);
-                        right_hw = static_cast<uint32_t>((rt_temp >> 32) & 0xFFFFFFFFu);
-                    }
+                u32x4 out;
+                out.element0 = mod_neg(red0, kernel_mod);
+                out.element1 = mod_neg(red1, kernel_mod);
+                out.element2 = mod_neg(red2, kernel_mod);
+                out.element3 = mod_neg(red3, kernel_mod);
 
-                    uint32_t middle_temp[2];
-                    {
-                        uint64_t mt_temp = static_cast<uint64_t>(product[0]) * static_cast<uint64_t>(kernel_const_ratio[1]);
-                        middle_temp[0] = static_cast<uint32_t>(mt_temp & 0xFFFFFFFFu);
-                        middle_temp[1] = static_cast<uint32_t>((mt_temp >> 32) & 0xFFFFFFFFu);
-                    }
-
-                    uint32_t middle_lw = right_hw + middle_temp[0];
-                    uint32_t middle_lw_carry = static_cast<uint8_t>(middle_lw < right_hw);
-                    uint32_t middle_hw = middle_temp[1] + middle_lw_carry;
-
-                    uint32_t middle2_temp[2];
-                    {
-                        uint64_t mt2_temp = static_cast<uint64_t>(product[1]) * static_cast<uint64_t>(kernel_const_ratio[0]);
-                        middle2_temp[0] = static_cast<uint32_t>(mt2_temp & 0xFFFFFFFFu);
-                        middle2_temp[1] = static_cast<uint32_t>((mt2_temp >> 32) & 0xFFFFFFFFu);
-                    }
-
-                    uint32_t middle2_lw = middle_lw + middle2_temp[0];
-                    uint32_t middle2_lw_carry = static_cast<uint8_t>(middle2_lw < middle_lw);
-                    uint32_t middle2_hw = middle2_temp[1] + middle2_lw_carry;
-
-                    uint32_t tmp = product[1] * kernel_const_ratio[1] + middle_hw + middle2_hw;
-                    tmp = product[0] - tmp * kernel_mod_val;
-
-                    int32_t is_ge_q = static_cast<int32_t>(tmp >= kernel_mod_val);
-                    uint32_t mask_red = static_cast<uint32_t>(-is_ge_q);
-                    uint32_t mult_result = tmp - (kernel_mod_val & mask_red);
-
-                    int32_t non_zero = static_cast<int32_t>(mult_result != 0);
-                    uint32_t mask_neg = static_cast<uint32_t>(-non_zero);
-                    uint32_t neg_result = (kernel_mod_val - mult_result) & mask_neg;
-
-                    reinterpret_cast<uint32_t*>(&out_block)[lane] = neg_result;
-                }
-
-                PipeSet::PolyMultNegToPolyAddModPipe::write(out_block);
+                Pipes::PolyMultNegToPolyAddPipe::write(out);
             }
         });
     }
 };
 
-// Backwards-compatible alias for pipeline P = 0.
-using PolyMultNegNTTKernel = PolyMultNegNTTKernelT<0>;
+}
