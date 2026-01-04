@@ -18,7 +18,6 @@ struct PipeSet
     struct ScaleReduceToNTTBPipeID {};
     struct NTTAToPolyMultNegPipeID {};
     struct NTTBToPolyAddPipeID {};
-    struct PolyMultNegToPolyAddPipeID {};
     struct NTTAToExitPipeID {};
     struct NTTBToExitPipeID {};
     struct PolyAddToExitPipeID {};
@@ -39,7 +38,6 @@ struct PipeSet
     
     using NTTAToPolyMultNegPipe = sycl::ext::intel::pipe<NTTAToPolyMultNegPipeID, u32x4, PIPE_CAPACITY>;
     using NTTBToPolyAddPipe = sycl::ext::intel::pipe<NTTBToPolyAddPipeID, u32x4, PIPE_CAPACITY>;
-    using PolyMultNegToPolyAddPipe = sycl::ext::intel::pipe<PolyMultNegToPolyAddPipeID, u32x4, PIPE_CAPACITY>;
 
     using NTTAToExitPipe = sycl::ext::intel::pipe<NTTAToExitPipeID, u32x4, PIPE_CAPACITY>;
     using NTTBToExitPipe = sycl::ext::intel::pipe<NTTBToExitPipeID, u32x4, PIPE_CAPACITY>;

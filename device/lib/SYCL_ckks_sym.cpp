@@ -10,8 +10,7 @@
 #include "SYCL_ntt.h"
 #include "SYCL_ifft.h"
 #include "SYCL_scale_and_reduce.h"
-#include "SYCL_poly_mult_neg.h"
-#include "SYCL_poly_add.h"
+#include "SYCL_poly_mult_neg_add.h"
 
 #include <iostream>
 #include <vector>
@@ -237,12 +236,7 @@ std::vector<event> pipeline(
         }));
 
         events.push_back(q.submit([&](handler& h) {
-            PolyAddKernel<P> kernel(mod_value);
-            kernel(h);
-        }));
-
-        events.push_back(q.submit([&](handler& h) {
-            PolyMultNegKernel<P> kernel(mod_value, const_ratio);
+            PolyMultNegAddKernel<P> kernel(mod_value, const_ratio);
             kernel(h);
         }));
 
