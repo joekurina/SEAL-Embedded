@@ -64,7 +64,7 @@ public:
             size_t output_count = 0;
 
             [[intel::initiation_interval(1)]]
-            while (output_count < NUM_BLOCKS) {
+            while (true) {
                 bool input_valid = false;
                 u32x4 input_block = Traits::InputPipe::read(input_valid);
 
@@ -101,7 +101,7 @@ public:
                         Traits::ExitPipe::write(output_block);
                     }
 
-                    output_count++;
+                    if (++output_count >= NUM_BLOCKS) break;
                 }
             }
 

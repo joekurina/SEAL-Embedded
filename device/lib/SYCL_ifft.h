@@ -46,6 +46,7 @@ public:
             }
 
             size_t tt = 1, hh = POLY_N / 2;
+            #pragma unroll
             for (size_t i = 0; i < POLY_LOGN; i++, tt *= 2, hh /= 2) {
                 for (size_t j = 0, kstart = 0; j < hh; j++, kstart += 2 * tt) {
                     size_t br = bitrev(hh + j, POLY_LOGN);
