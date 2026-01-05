@@ -3,17 +3,16 @@
 */
 
 #include <math.h>
-#include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
-#include <stdlib.h> // Needed for calloc, free
-#include <string.h> // Needed for memset
+#include <stdlib.h>
+#include <string.h>
 
 #include "ckks_common.h"
 #include "ckks_sym.h"
 #include "ckks_tests_common.h"
 #include "defines.h"
-#include "fft.h" // Might need complex type definition if not included elsewhere
+#include "fft.h"
 #include "fileops.h"
 #include "ntt.h"
 #include "polymodarith.h"
@@ -21,25 +20,7 @@
 #include "sample.h"
 #include "test_common.h"
 #include "util_print.h"
-
-typedef struct PipelineTask
-{
-    int pipeline_index;
-    Parms parms;
-    const flpt *values;
-    size_t values_len;
-    SE_PRNG shareable_prng;
-    SE_PRNG error_prng;
-    ZZ *s_small;
-    ZZ *ntt_pte;
-    ZZ *ntt_roots;
-    ZZ *c0;
-    ZZ *c1;
-    ZZ *s_save;
-    ZZ *c1_save;
-    complex_double *encoding_buffer;
-    uint16_t *index_map;
-} PipelineTask;
+#include "SYCL_ckks_sym.h"
 
 static void prepare_parms_for_prime(const Parms *base, Parms *dst, size_t prime_idx, ZZ *s_small)
 {
@@ -50,33 +31,9 @@ static void prepare_parms_for_prime(const Parms *base, Parms *dst, size_t prime_
     }
 }
 
-static void *run_pipeline_thread(void *arg)
-{
-    PipelineTask *task = (PipelineTask *)arg;
-    ckks_combined_encode_encrypt_sym_pipeline(
-        task->pipeline_index,
-        &task->parms,
-        task->values,
-        task->values_len,
-        &task->shareable_prng,
-        &task->error_prng,
-        task->s_small,
-        task->ntt_pte,
-        task->ntt_roots,
-        task->c0,
-        task->c1,
-        task->s_save,
-        task->c1_save,
-        task->encoding_buffer,
-        task->index_map);
-
-    return NULL;
-}
-
-// Newer Combined ENCODE + ENCRYPT test using individual allocations
 void SYCL_test_ckks_sym_base(size_t n, size_t nprimes, bool test_message)
 {
-    const size_t pipeline_count = 3;
+    const size_t moduli_count = SYCL_NUM_MODULI;
     Parms parms;
     parms.sample_s      = false; 
     parms.is_asymmetric = false;
@@ -85,217 +42,186 @@ void SYCL_test_ckks_sym_base(size_t n, size_t nprimes, bool test_message)
 
     if (!parms.sample_s) se_assert(parms.small_s);
 
-    // Pointers for individually allocated buffers (per pipeline)
-    complex_double *conj_vals[3] = {0}; // Used as encoding buffer
-    ZZ *c0[3]                    = {0};
-    ZZ *c1[3]                    = {0};
-    uint16_t *index_map          = NULL; // Shared
-    ZZ *ntt_roots[3]             = {0};
-    ZZ *ntt_pte[3]               = {0};
-    ZZ *s[3]                     = {0}; // Secret key buffer (small form copy per pipeline)
-    flpt *v                      = NULL; // Message buffer (shared)
-    size_t vlen                 = n / 2;
+    complex_double *encoding_buffer = NULL;
+    int8_t *error_samples = NULL;
+    ZZ *c0[SYCL_NUM_MODULI] = {0};
+    ZZ *c1[SYCL_NUM_MODULI] = {0};
+    ZZ *expanded_s[SYCL_NUM_MODULI] = {0};
+    ZZ *uniform_poly[SYCL_NUM_MODULI] = {0};
+    uint16_t *index_map = NULL;
+    ZZ *ntt_pte[SYCL_NUM_MODULI] = {0};
+    ZZ *s_small = NULL;
+    flpt *v = NULL;
+    size_t vlen = n / 2;
 
-    // -- Additional pointers required for testing (allocated separately as before)
-    ZZ *s_test_save[3]  = {0};
-    ZZ *c1_test_save[3] = {0};
+    ZZ *s_test_save[SYCL_NUM_MODULI] = {0};
+    ZZ *c1_test_save[SYCL_NUM_MODULI] = {0};
     ZZ *temp_test_mem = NULL;
 
     SE_PRNG prng;
     SE_PRNG shareable_prng;
-    SE_PRNG pipeline_prng[3];
-    SE_PRNG pipeline_shareable_prng[3];
+    SE_PRNG error_prng;
 
-    // --- Allocate Buffers Individually ---
     bool allocation_success = true;
 
-    for (size_t i = 0; i < pipeline_count; ++i) {
-        conj_vals[i] = (complex_double *)calloc(n, sizeof(complex_double));
-        if (!conj_vals[i]) { allocation_success = false; goto cleanup; }
+    encoding_buffer = (complex_double *)calloc(n, sizeof(complex_double));
+    if (!encoding_buffer) { allocation_success = false; goto cleanup; }
 
+    error_samples = (int8_t *)calloc(n, sizeof(int8_t));
+    if (!error_samples) { allocation_success = false; goto cleanup; }
+
+    for (size_t i = 0; i < moduli_count; ++i) {
         c0[i] = (ZZ *)calloc(n, sizeof(ZZ));
         if (!c0[i]) { allocation_success = false; goto cleanup; }
 
         c1[i] = (ZZ *)calloc(n, sizeof(ZZ));
         if (!c1[i]) { allocation_success = false; goto cleanup; }
 
+        expanded_s[i] = (ZZ *)calloc(n, sizeof(ZZ));
+        if (!expanded_s[i]) { allocation_success = false; goto cleanup; }
+
+        uniform_poly[i] = (ZZ *)calloc(n, sizeof(ZZ));
+        if (!uniform_poly[i]) { allocation_success = false; goto cleanup; }
+
         ntt_pte[i] = (ZZ *)calloc(n, sizeof(ZZ));
         if (!ntt_pte[i]) { allocation_success = false; goto cleanup; }
+
+        s_test_save[i] = (ZZ *)calloc(n, sizeof(ZZ));
+        if (!s_test_save[i]) { allocation_success = false; goto cleanup; }
+
+        c1_test_save[i] = (ZZ *)calloc(n, sizeof(ZZ));
+        if (!c1_test_save[i]) { allocation_success = false; goto cleanup; }
     }
 
-    // Determine secret key buffer size (assuming ZZ type for buffer)
-    size_t s_buf_size = parms.small_s ? (n / 16 + (n % 16 != 0)) : n; // Rough size for small_s, use n for expanded
-    // Allocate slightly larger buffer for s if small form, or full ZZ * n if expanded needed
-    for (size_t i = 0; i < pipeline_count; ++i) {
-        s[i] = (ZZ *)calloc(s_buf_size, sizeof(ZZ)); // Adjust size accurately if needed
-        if (!s[i]) { allocation_success = false; goto cleanup; }
-    }
+    size_t s_buf_size = parms.small_s ? (n / 16 + (n % 16 != 0)) : n;
+    s_small = (ZZ *)calloc(s_buf_size, sizeof(ZZ));
+    if (!s_small) { allocation_success = false; goto cleanup; }
 
     if (test_message) {
         v = (flpt *)calloc(vlen, sizeof(flpt));
         if (!v) { allocation_success = false; goto cleanup; }
     }
 
-    // Allocate conditional buffers based on defines (mirror logic from ckks_set_ptrs_sym)
 #if defined(SE_INDEX_MAP_PERSIST) || defined(SE_INDEX_MAP_LOAD) || \
-    defined(SE_INDEX_MAP_LOAD_PERSIST) || \
-    defined(SE_INDEX_MAP_LOAD_PERSIST_SYM_LOAD_ASYM)
+    defined(SE_INDEX_MAP_LOAD_PERSIST) || defined(SE_INDEX_MAP_LOAD_PERSIST_SYM_LOAD_ASYM)
     index_map = (uint16_t *)calloc(n, sizeof(uint16_t));
     if (!index_map) { allocation_success = false; goto cleanup; }
 #endif
 
-#if defined(SE_NTT_ONE_SHOT) || defined(SE_NTT_REG)
-    size_t ntt_roots_size = n;
-#elif defined(SE_NTT_FAST)
-    size_t ntt_roots_size = 2 * n;
-#else
-    size_t ntt_roots_size = 0; // NTT OTF
-#endif
-    if (ntt_roots_size > 0) {
-        for (size_t i = 0; i < pipeline_count; ++i) {
-            ntt_roots[i] = (ZZ *)calloc(ntt_roots_size, sizeof(ZZ));
-            if (!ntt_roots[i]) { allocation_success = false; goto cleanup; }
-        }
-    }
-
-    // Allocate test-specific buffers
-    for (size_t i = 0; i < pipeline_count; ++i) {
-        s_test_save[i] = calloc(n, sizeof(ZZ));
-        if (!s_test_save[i]) { allocation_success = false; goto cleanup; }
-        c1_test_save[i] = calloc(n, sizeof(ZZ));
-        if (!c1_test_save[i]) { allocation_success = false; goto cleanup; }
-    }
-    temp_test_mem = calloc(4 * n, sizeof(ZZ)); // Used by check_decode_decrypt_inpl
+    temp_test_mem = (ZZ *)calloc(4 * n, sizeof(ZZ));
     if (!temp_test_mem) { allocation_success = false; goto cleanup; }
 
-    // --- Setup Parameters ---
-    // Ensure index_map is allocated above if needed by ckks_setup config.
     ckks_setup(n, nprimes, index_map, &parms);
     print_test_banner("Symmetric Encryption", &parms);
 
-    // Setup secret key 's' (populates the first buffer, then copy to others)
-    ckks_setup_s(&parms, NULL, &prng, s[0]);
-    for (size_t i = 1; i < pipeline_count; ++i) {
-        memcpy(s[i], s[0], s_buf_size * sizeof(ZZ));
-    }
-    // size_t s_size = parms.small_s ? n / 16 : n; // This was from original, use s_buf_size
-    if (encode_only) clear(s, s_buf_size);
+    ckks_setup_s(&parms, NULL, &prng, s_small);
+    if (encode_only) clear(s_small, s_buf_size);
 
-    // --- Run Tests ---
     for (size_t testnum = 0; testnum < 9; testnum++)
     {
         printf("-------------------- Test %zu -----------------------\n", testnum);
         ckks_reset_primes(&parms);
 
-        // -- Set test values in 'v' buffer
-        if (test_message)
-        {
+        if (test_message) {
             set_encode_encrypt_test(testnum, vlen, v);
             print_poly_flpt("v        ", v, vlen);
-        }
-        else if (v) // Check if v was allocated (i.e., test_message was true at allocation time)
-        {
-             // If not testing with a message, use zeros (only if v exists)
-             memset(v, 0, vlen * sizeof(flpt));
+        } else if (v) {
+            memset(v, 0, vlen * sizeof(flpt));
         }
 
-
-        // -- Initialize PRNGs for this test run
         prng_randomize_reset(&shareable_prng, NULL);
         prng_randomize_reset(&prng, NULL);
+        prng_randomize_reset(&error_prng, NULL);
 
         bool test_failed = false;
-        size_t prime_idx = 0;
-        while (prime_idx < parms.nprimes)
+
+        se_assert(parms.nprimes == moduli_count);
+
+        Parms mod_parms[SYCL_NUM_MODULI];
+        double scales[SYCL_NUM_MODULI];
+        uint32_t mod_values[SYCL_NUM_MODULI];
+        uint32_t const_ratios[SYCL_NUM_MODULI * 2];
+
+        for (size_t p = 0; p < moduli_count; ++p) {
+            prepare_parms_for_prime(&parms, &mod_parms[p], p, s_small);
+            scales[p] = mod_parms[p].scale;
+            mod_values[p] = (uint32_t)mod_parms[p].curr_modulus->value;
+            const_ratios[p * 2] = (uint32_t)mod_parms[p].curr_modulus->const_ratio[0];
+            const_ratios[p * 2 + 1] = (uint32_t)mod_parms[p].curr_modulus->const_ratio[1];
+        }
+
+        memset(encoding_buffer, 0, n * sizeof(complex_double));
+        if (test_message && v != NULL && index_map != NULL) {
+            size_t slot_count = n / 2;
+            for (size_t i = 0; i < vlen; i++) {
+                uint16_t index1_rev = index_map[i];
+                uint16_t index2_rev = index_map[i + slot_count];
+                double val_real = (double)(v[i]);
+                ((double*)encoding_buffer)[2*index1_rev] = val_real;
+                ((double*)encoding_buffer)[2*index1_rev+1] = 0.0;
+                ((double*)encoding_buffer)[2*index2_rev] = val_real;
+                ((double*)encoding_buffer)[2*index2_rev+1] = 0.0;
+            }
+        }
+
+        for (size_t i = 0; i < n; i++) {
+            int8_t temp_buffer[1] = {0};
+            sample_poly_cbd_generic(1, &error_prng, temp_buffer);
+            error_samples[i] = temp_buffer[0];
+        }
+
+        for (size_t p = 0; p < moduli_count; ++p) {
+            expand_poly_ternary(s_small, &mod_parms[p], expanded_s[p]);
+            sample_poly_uniform(&mod_parms[p], &shareable_prng, uniform_poly[p]);
+            prng_randomize_reset(&shareable_prng, NULL);
+        }
+
+        SYCL_encrypt(
+            n, parms.logn, scales, mod_values, const_ratios,
+            encoding_buffer, error_samples,
+            (uint32_t* const*)expanded_s, (uint32_t* const*)uniform_poly,
+            (uint32_t**)c0, (uint32_t**)c1,
+            (uint32_t**)s_test_save, (uint32_t**)c1_test_save,
+            (uint32_t**)ntt_pte);
+
+        for (size_t p = 0; p < moduli_count; ++p)
         {
-            size_t batch = (parms.nprimes - prime_idx > pipeline_count) ? pipeline_count : (parms.nprimes - prime_idx);
-
-            pthread_t threads[3];
-            PipelineTask tasks[3];
-
-            // Prepare and launch batch in parallel
-            for (size_t p = 0; p < batch; ++p)
-            {
-                size_t pipeline_id = p; // 0,1,2 for this batch
-                tasks[p].pipeline_index = (int)pipeline_id;
-                prepare_parms_for_prime(&parms, &tasks[p].parms, prime_idx + p, s[pipeline_id]);
-
-                prng_randomize_reset(&pipeline_shareable_prng[p], NULL);
-                prng_randomize_reset(&pipeline_prng[p], NULL);
-
-                tasks[p].values      = test_message ? v : NULL;
-                tasks[p].values_len  = vlen;
-                tasks[p].shareable_prng = pipeline_shareable_prng[p];
-                tasks[p].error_prng     = pipeline_prng[p];
-                tasks[p].s_small     = s[pipeline_id];
-                tasks[p].ntt_pte     = ntt_pte[pipeline_id];
-                tasks[p].ntt_roots   = ntt_roots[pipeline_id];
-                tasks[p].c0          = c0[pipeline_id];
-                tasks[p].c1          = c1[pipeline_id];
-                tasks[p].s_save      = s_test_save[pipeline_id];
-                tasks[p].c1_save     = c1_test_save[pipeline_id];
-                tasks[p].encoding_buffer = conj_vals[pipeline_id];
-                tasks[p].index_map   = index_map;
-
-                int rc = pthread_create(&threads[p], NULL, run_pipeline_thread, &tasks[p]);
-                se_assert(rc == 0);
+            bool s_test_save_small = false;
+            bool success = check_decode_decrypt_inpl(
+                c0[p], c1_test_save[p], v, vlen,
+                s_test_save[p], s_test_save_small,
+                ntt_pte[p], index_map, &mod_parms[p], temp_test_mem);
+            if (!success) {
+                test_failed = true;
             }
-
-            // Join batch
-            for (size_t p = 0; p < batch; ++p)
-            {
-                pthread_join(threads[p], NULL);
-            }
-
-            // Decode/decrypt sequentially for each modulus in the batch
-            for (size_t p = 0; p < batch; ++p)
-            {
-                bool s_test_save_small = false;
-                bool success = check_decode_decrypt_inpl(
-                    tasks[p].c0,
-                    tasks[p].c1_save,
-                    v,
-                    vlen,
-                    tasks[p].s_save,
-                    s_test_save_small,
-                    tasks[p].ntt_pte,
-                    index_map,
-                    &tasks[p].parms,
-                    temp_test_mem);
-                if (!success) {
-                    test_failed = true;
-                }
-            }
-
-            prime_idx += batch;
         }
 
         if (test_failed) {
             printf("TEST FAILED\n");
         }
 
-        // -- Can exit now if rlwe testing only
         if (!test_message) break;
     }
 
 cleanup:
-    // --- Cleanup ---
     if (!allocation_success) {
         printf("Aborting test due to memory allocation failure.\n");
     }
 
-    for (size_t i = 0; i < pipeline_count; ++i) {
-        free(conj_vals[i]);
+    free(encoding_buffer);
+    free(error_samples);
+    for (size_t i = 0; i < moduli_count; ++i) {
         free(c0[i]);
         free(c1[i]);
+        free(expanded_s[i]);
+        free(uniform_poly[i]);
         free(ntt_pte[i]);
-        free(s[i]);
         free(s_test_save[i]);
         free(c1_test_save[i]);
-        free(ntt_roots[i]);
     }
-    free(v); // Free v if it was allocated
-    free(index_map); // Free index_map if it was allocated
+    free(s_small);
+    free(v);
+    free(index_map);
     free(temp_test_mem);
 
     delete_parameters(&parms);

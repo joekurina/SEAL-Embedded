@@ -81,6 +81,24 @@ void SYCL_combined_encrypt_pipeline(
     uint32_t* s_save,
     uint32_t* c1_save);
 
+#define SYCL_NUM_MODULI 3
+
+void SYCL_encrypt(
+    size_t n,
+    size_t logn,
+    const double* scales,
+    const uint32_t* mod_values,
+    const uint32_t* const_ratios,
+    complex_double* encoding_buffer,
+    int8_t* error_samples,
+    uint32_t* const* expanded_s,
+    uint32_t* const* uniform_polys,
+    uint32_t** c0_outputs,
+    uint32_t** c1_outputs,
+    uint32_t** s_save,
+    uint32_t** c1_save,
+    uint32_t** ntt_pte_outputs);
+
 #ifdef __cplusplus
 }
 #endif

@@ -49,25 +49,17 @@ static_assert(sizeof(u32x4) == sizeof(uint32_t) * 4, "u32x4 size mismatch");
 static_assert(sizeof(i8x4) == sizeof(int8_t) * 4, "i8x4 size mismatch");
 static_assert(sizeof(i64x4) == sizeof(int64_t) * 4, "i64x4 size mismatch");
 
-struct PipelineConfig {
-    size_t n;
-    size_t logn;
-    double scale;
-    uint32_t mod_value;
-    uint32_t const_ratio[2];
-    uint8_t modulus_selector;
-    bool save_ntt_s;
-    bool save_ntt_pte;
-};
-
-struct PipelineInputBlock {
+struct SharedInputBlock {
     encoding_block encoding;
     i8x4 error;
+};
+
+struct PerModulusInputBlock {
     u32x4 secret_key;
     u32x4 uniform_poly;
 };
 
-struct PipelineOutputBlock {
+struct PerModulusOutputBlock {
     u32x4 c0;
     u32x4 ntt_s;
     u32x4 ntt_pte;

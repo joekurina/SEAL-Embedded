@@ -31,7 +31,6 @@ public:
 
         h.single_task<PolyMultNegAddKernelTask<P>>([=]() [[intel::kernel_args_restrict]] {
             using Pipes = PipeSet<P>;
-            uint32_t cr[2] = {kernel_cr0, kernel_cr1};
 
             [[intel::initiation_interval(1)]]
             for (size_t blk = 0; blk < NUM_BLOCKS; ++blk) {
@@ -44,10 +43,10 @@ public:
                 uint64_t prod2 = static_cast<uint64_t>(ntt_s.element2) * static_cast<uint64_t>(c1.element2);
                 uint64_t prod3 = static_cast<uint64_t>(ntt_s.element3) * static_cast<uint64_t>(c1.element3);
 
-                uint32_t red0 = barrett_reduce_u64(prod0, kernel_mod, cr);
-                uint32_t red1 = barrett_reduce_u64(prod1, kernel_mod, cr);
-                uint32_t red2 = barrett_reduce_u64(prod2, kernel_mod, cr);
-                uint32_t red3 = barrett_reduce_u64(prod3, kernel_mod, cr);
+                uint32_t red0 = barrett_reduce_u64_core(prod0, kernel_mod, kernel_cr0, kernel_cr1);
+                uint32_t red1 = barrett_reduce_u64_core(prod1, kernel_mod, kernel_cr0, kernel_cr1);
+                uint32_t red2 = barrett_reduce_u64_core(prod2, kernel_mod, kernel_cr0, kernel_cr1);
+                uint32_t red3 = barrett_reduce_u64_core(prod3, kernel_mod, kernel_cr0, kernel_cr1);
 
                 uint32_t neg0 = mod_neg(red0, kernel_mod);
                 uint32_t neg1 = mod_neg(red1, kernel_mod);

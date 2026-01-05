@@ -2,19 +2,36 @@
 
 #include "SYCL_data_types.h"
 #include "SYCL_common.h"
+#include "pipe_utils.hpp"
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
 namespace sycl_ckks {
 
+struct SharedToIFFTPipeId {};
+using SharedToIFFTPipe = sycl::ext::intel::pipe<SharedToIFFTPipeId, encoding_block, PIPE_CAPACITY>;
+
+struct IFFTToScaleReducePipeArrayId {};
+using IFFTToScaleReducePipes = fpga_tools::PipeArray<
+    IFFTToScaleReducePipeArrayId,
+    encoding_block,
+    PIPE_CAPACITY,
+    NUM_MODULI
+>;
+
+struct ErrorToScaleReducePipeArrayId {};
+using ErrorToScaleReducePipes = fpga_tools::PipeArray<
+    ErrorToScaleReducePipeArrayId,
+    i8x4,
+    PIPE_CAPACITY,
+    NUM_MODULI
+>;
+
 template <int P>
 struct PipeSet
 {
-    struct EntryToIFFTPipeID {};
-    struct EntryToScaleReducePipeID {};
     struct EntryToNTTAPipeID {};
     struct EntryToPolyMultNegPipeID {};
-    struct IFFTToScaleReducePipeID {};
     struct ScaleReduceToNTTBPipeID {};
     struct NTTAToPolyMultNegPipeID {};
     struct NTTBToPolyAddPipeID {};
@@ -28,12 +45,17 @@ struct PipeSet
     struct NTTBModSelectorPipeID {};
     struct NTTBOutputPipeID {};
 
-    using EntryToIFFTPipe = sycl::ext::intel::pipe<EntryToIFFTPipeID, encoding_block, PIPE_CAPACITY>;
-    using EntryToScaleReducePipe = sycl::ext::intel::pipe<EntryToScaleReducePipeID, i8x4, PIPE_CAPACITY>;
+    struct SingleIFFTInputPipeID {};
+    struct SingleIFFTOutputPipeID {};
+    struct SingleErrorToScaleReducePipeID {};
+
+    using SingleIFFTInputPipe = sycl::ext::intel::pipe<SingleIFFTInputPipeID, encoding_block, PIPE_CAPACITY>;
+    using SingleIFFTOutputPipe = sycl::ext::intel::pipe<SingleIFFTOutputPipeID, encoding_block, PIPE_CAPACITY>;
+    using SingleErrorToScaleReducePipe = sycl::ext::intel::pipe<SingleErrorToScaleReducePipeID, i8x4, PIPE_CAPACITY>;
+
     using EntryToNTTAPipe = sycl::ext::intel::pipe<EntryToNTTAPipeID, u32x4, PIPE_CAPACITY>;
     using EntryToPolyMultNegPipe = sycl::ext::intel::pipe<EntryToPolyMultNegPipeID, u32x4, PIPE_CAPACITY>;
 
-    using IFFTToScaleReducePipe = sycl::ext::intel::pipe<IFFTToScaleReducePipeID, encoding_block, PIPE_CAPACITY>;
     using ScaleReduceToNTTBPipe = sycl::ext::intel::pipe<ScaleReduceToNTTBPipeID, u32x4, PIPE_CAPACITY>;
     
     using NTTAToPolyMultNegPipe = sycl::ext::intel::pipe<NTTAToPolyMultNegPipeID, u32x4, PIPE_CAPACITY>;

@@ -14,12 +14,12 @@ class ExitKernelTask;
 template <int P>
 class ExitKernel {
 private:
-    mutable sycl::buffer<PipelineOutputBlock, 1> output_buf;
+    mutable sycl::buffer<PerModulusOutputBlock, 1> output_buf;
     bool save_ntt_s;
     bool save_ntt_pte;
 
 public:
-    ExitKernel(sycl::buffer<PipelineOutputBlock, 1>& buf, bool save_s = false, bool save_pte = false)
+    ExitKernel(sycl::buffer<PerModulusOutputBlock, 1>& buf, bool save_s = false, bool save_pte = false)
         : output_buf(buf), save_ntt_s(save_s), save_ntt_pte(save_pte) {}
 
     void operator()(sycl::handler& h) const {
@@ -32,7 +32,7 @@ public:
 
             [[intel::initiation_interval(1)]]
             for (size_t blk = 0; blk < NUM_BLOCKS; ++blk) {
-                PipelineOutputBlock out_block{};
+                PerModulusOutputBlock out_block{};
 
                 out_block.c0 = Pipes::PolyAddToExitPipe::read();
 

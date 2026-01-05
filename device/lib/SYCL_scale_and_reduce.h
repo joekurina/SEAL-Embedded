@@ -34,12 +34,11 @@ public:
         h.single_task<ScaleAndReduceKernelTask<P>>([=]() [[intel::kernel_args_restrict]] {
             using Pipes = PipeSet<P>;
             double n_inv = kernel_scale / static_cast<double>(POLY_N);
-            uint32_t cr[2] = {kernel_cr0, kernel_cr1};
 
             [[intel::initiation_interval(1)]]
             for (size_t blk = 0; blk < NUM_BLOCKS; ++blk) {
-                encoding_block enc = Pipes::IFFTToScaleReducePipe::read();
-                i8x4 err = Pipes::EntryToScaleReducePipe::read();
+                encoding_block enc = IFFTToScaleReducePipes::PipeAt<P>::read();
+                i8x4 err = ErrorToScaleReducePipes::PipeAt<P>::read();
 
                 double scaled0 = sycl::round(enc.element0.real() * n_inv);
                 double scaled1 = sycl::round(enc.element1.real() * n_inv);
@@ -52,10 +51,10 @@ public:
                 int64_t int_val3 = static_cast<int64_t>(scaled3) + err.element3;
 
                 u32x4 out;
-                out.element0 = barrett_reduce_64(int_val0, kernel_mod, cr, false);
-                out.element1 = barrett_reduce_64(int_val1, kernel_mod, cr, false);
-                out.element2 = barrett_reduce_64(int_val2, kernel_mod, cr, false);
-                out.element3 = barrett_reduce_64(int_val3, kernel_mod, cr, false);
+                out.element0 = barrett_reduce_64_core(int_val0, kernel_mod, kernel_cr0, kernel_cr1, false);
+                out.element1 = barrett_reduce_64_core(int_val1, kernel_mod, kernel_cr0, kernel_cr1, false);
+                out.element2 = barrett_reduce_64_core(int_val2, kernel_mod, kernel_cr0, kernel_cr1, false);
+                out.element3 = barrett_reduce_64_core(int_val3, kernel_mod, kernel_cr0, kernel_cr1, false);
 
                 Pipes::ScaleReduceToNTTBPipe::write(out);
             }
