@@ -129,12 +129,11 @@ device/lib/
 ├── SYCL_common.h              # Constants, Barrett reduction, lane helpers
 ├── SYCL_data_types.h          # Block types, pack/unpack functions
 ├── SYCL_pipes.h               # PipeSet<P> template
-├── SYCL_twiddles.h            # IFFT twiddle factor LUT
 ├── pipe_utils.hpp             # Intel PipeArray utilities
 │
 ├── SYCL_shared_entry.h        # SharedEntryKernel
 ├── SYCL_per_mod_entry.h       # PerModulusEntryKernel<P>
-├── SYCL_ifft.h                # IFFTKernel
+├── SYCL_ifft.h                # IFFTKernel (to be replaced with RTL)
 ├── SYCL_scale_and_reduce.h    # ScaleAndReduceKernel<P>
 ├── SYCL_ntt.h                 # NTTKernel<P, Tag>
 ├── SYCL_poly_mult_neg_add.h   # PolyMultNegAddKernel<P>
@@ -164,11 +163,6 @@ device/lib/
 
 ## Optimizations Completed
 
-### IFFT Twiddle LUT
-- Precomputed 4096-element twiddle factor table
-- O(n log n) → O(n) cos/sin calls
-- ~12x reduction in transcendental function calls
-
 ### Barrett Reduction Specialization
 - Hardcoded `const_ratio = floor(2^64 / q)` for 6 known moduli
 - Enables FPGA constant propagation
@@ -184,8 +178,8 @@ device/lib/
 
 ### Single IFFT Instance
 - One IFFT serves all 3 moduli via PipeArray fanout
-- Saves ~26% ALM vs 3 separate instances
 - Reduces host→device transfer by 45%
+- IFFT kernel to be replaced with RTL
 
 ---
 
