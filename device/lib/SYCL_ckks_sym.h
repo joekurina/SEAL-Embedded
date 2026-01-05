@@ -3,7 +3,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Define complex_double type for both C and C++ contexts
 #ifdef __cplusplus
 #include <complex>
 typedef std::complex<double> complex_double;
@@ -17,82 +16,17 @@ typedef std::complex<double> complex_double;
 extern "C" {
 #endif
 
-/**
- * SYCL-accelerated combined encode and encrypt function for CKKS symmetric encryption.
- * This is the C interface to the SYCL implementation using only standard C types
- * with unpacked struct values.
- * 
- * @param n                  Polynomial degree
- * @param logn               Log of polynomial degree
- * @param scale              CKKS scale value
- * @param mod_value          Modulus value (q)
- * @param const_ratio        Pointer to modulus const_ratio array
- * @param encoding_buffer    Buffer containing encoded values
- * @param expanded_s         Expanded secret key buffer
- * @param uniform_poly       Uniform polynomial (c1) buffer
- * @param error_samples      Error samples buffer
- * @param pt_with_error      Buffer for plaintext + error
- * @param ntt_pte            Scratch space for NTT of plaintext+error
- * @param c0_s               Output: 1st ciphertext component
- * @param c1                 Output: 2nd ciphertext component
- * @param s_save             Optional: Save expanded s (for testing)
- * @param c1_save            Optional: Save c1 (for testing)
- */
-void SYCL_combined_encrypt(
-    /* parms related values */
-    size_t n,                       // Polynomial degree
-    size_t logn,                    // Log of polynomial degree
-    double scale,                   // Scale value
-    
-    /* modulus related values */
-    uint32_t mod_value,             // Modulus value (q)
-    const uint32_t* const_ratio,    // Const ratio for Barrett reduction
-    
-    /* data buffers */
-    complex_double* encoding_buffer, // Buffer for encoding
-    uint32_t* expanded_s,           // Expanded secret key
-    uint32_t* uniform_poly,         // Uniform polynomial (c1)
-    int8_t* error_samples,          // Error samples
-    int64_t* pt_with_error,         // Plaintext + error
-    uint32_t* ntt_pte,              // Scratch space for NTT
-    uint32_t* c0_s,                 // Output: 1st ciphertext component
-    uint32_t* c1,                   // Output: 2nd ciphertext component
-    uint32_t* s_save,               // Optional: Save expanded s (for testing)
-    uint32_t* c1_save               // Optional: Save c1 (for testing)
-);
-
-// Launch the SYCL pipeline on a specific pipeline index (0, 1, 2) to enable
-// concurrent execution across independent pipe namespaces.
-void SYCL_combined_encrypt_pipeline(
-    int pipeline_index,
-    size_t n,
-    size_t logn,
-    double scale,
-    uint32_t mod_value,
-    const uint32_t* const_ratio,
-    complex_double* encoding_buffer,
-    uint32_t* expanded_s,
-    uint32_t* uniform_poly,
-    int8_t* error_samples,
-    int64_t* pt_with_error,
-    uint32_t* ntt_pte,
-    uint32_t* c0_s,
-    uint32_t* c1,
-    uint32_t* s_save,
-    uint32_t* c1_save);
-
 #define SYCL_NUM_MODULI 3
 
 void SYCL_encrypt(
     size_t n,
-    size_t logn,
     const double* scales,
     const uint32_t* mod_values,
-    const uint32_t* const_ratios,
-    complex_double* encoding_buffer,
-    int8_t* error_samples,
-    uint32_t* const* expanded_s,
-    uint32_t* const* uniform_polys,
+    const uint32_t* const_ratios,  // [NUM_MODULI * 2]: {cr0_p0, cr1_p0, cr0_p1, cr1_p1, ...}
+    const complex_double* encoding_buffer,
+    const int8_t* error_samples,
+    const uint32_t* const* secret_keys,
+    const uint32_t* const* uniform_polys,
     uint32_t** c0_outputs,
     uint32_t** c1_outputs,
     uint32_t** s_save,

@@ -55,7 +55,6 @@ inline bool get_barrett_constants(uint32_t mod_value, uint32_t& cr_lo, uint32_t&
 // Specialized Barrett reduction using hardcoded const_ratio
 // ============================================================================
 
-// Barrett reduction core computation (inlined, uses explicit cr values)
 inline uint32_t barrett_reduce_64_core(
     int64_t val,
     uint32_t mod_value,
@@ -65,222 +64,76 @@ inline uint32_t barrett_reduce_64_core(
 {
     uint64_t coeff_abs = (val < 0) ? static_cast<uint64_t>(-val) : static_cast<uint64_t>(val);
     uint32_t sign_mask = static_cast<uint32_t>(val < 0);
-    
-    uint32_t coeff_abs_vec[2];
-    coeff_abs_vec[0] = static_cast<uint32_t>(coeff_abs & 0xFFFFFFFF);
-    coeff_abs_vec[1] = static_cast<uint32_t>((coeff_abs >> 32) & 0xFFFFFFFF);
-    
-    uint32_t right_hw;
-    {
-        uint64_t res_temp = static_cast<uint64_t>(coeff_abs_vec[0]) * static_cast<uint64_t>(cr0);
-        right_hw = static_cast<uint32_t>((res_temp >> 32) & 0xFFFFFFFF);
-    }
-    
-    uint32_t middle_temp[2];
-    {
-        uint64_t res_temp = static_cast<uint64_t>(coeff_abs_vec[0]) * static_cast<uint64_t>(cr1);
-        middle_temp[0] = static_cast<uint32_t>(res_temp & 0xFFFFFFFF);
-        middle_temp[1] = static_cast<uint32_t>((res_temp >> 32) & 0xFFFFFFFF);
-    }
-    
-    uint32_t middle_lw = right_hw + middle_temp[0];
-    uint32_t middle_lw_carry = static_cast<uint8_t>(middle_lw < right_hw);
-    uint32_t middle_hw = middle_temp[1] + middle_lw_carry;
-    
-    uint32_t middle2_temp[2];
-    {
-        uint64_t res_temp = static_cast<uint64_t>(coeff_abs_vec[1]) * static_cast<uint64_t>(cr0);
-        middle2_temp[0] = static_cast<uint32_t>(res_temp & 0xFFFFFFFF);
-        middle2_temp[1] = static_cast<uint32_t>((res_temp >> 32) & 0xFFFFFFFF);
-    }
-    
-    uint32_t middle2_lw = middle_lw + middle2_temp[0];
-    uint32_t middle2_lw_carry = static_cast<uint8_t>(middle2_lw < middle_lw);
-    uint32_t middle2_hw = middle2_temp[1] + middle2_lw_carry;
-    
-    uint32_t tmp = coeff_abs_vec[1] * cr1 + middle_hw + middle2_hw;
-    tmp = coeff_abs_vec[0] - tmp * mod_value;
-    
-    {
-        int32_t is_ge_q = static_cast<int32_t>(tmp >= mod_value);
-        uint32_t mask = static_cast<uint32_t>(-is_ge_q);
-        tmp = tmp - (mod_value & mask);
-    }
-    
+
+    uint32_t coeff_lo = static_cast<uint32_t>(coeff_abs);
+    uint32_t coeff_hi = static_cast<uint32_t>(coeff_abs >> 32);
+
+    uint64_t tmp0 = static_cast<uint64_t>(coeff_lo) * cr0;
+    uint64_t tmp1 = static_cast<uint64_t>(coeff_lo) * cr1;
+    uint64_t tmp2 = static_cast<uint64_t>(coeff_hi) * cr0;
+
+    uint32_t right_hw = static_cast<uint32_t>(tmp0 >> 32);
+    uint32_t mid_lo = right_hw + static_cast<uint32_t>(tmp1);
+    uint32_t mid_hi = static_cast<uint32_t>(tmp1 >> 32) + (mid_lo < right_hw);
+    uint32_t mid2_lo = mid_lo + static_cast<uint32_t>(tmp2);
+    uint32_t mid2_hi = static_cast<uint32_t>(tmp2 >> 32) + (mid2_lo < mid_lo);
+
+    uint32_t tmp = coeff_hi * cr1 + mid_hi + mid2_hi;
+    tmp = coeff_lo - tmp * mod_value;
+
+    if (tmp >= mod_value) tmp -= mod_value;
+
     uint32_t result = ((mod_value - tmp) & (-sign_mask)) + (tmp & (sign_mask - 1));
-    
+
     if (negate_result) {
-        int32_t non_zero = static_cast<int32_t>(result != 0);
-        uint32_t neg_mask = static_cast<uint32_t>(-non_zero);
-        result = (mod_value - result) & neg_mask;
+        uint32_t mask = static_cast<uint32_t>(-(result != 0));
+        result = (mod_value - result) & mask;
     }
-    
+
     return result;
 }
 
-// Barrett reduction for unsigned 64-bit product (core computation)
 inline uint32_t barrett_reduce_u64_core(
     uint64_t product,
     uint32_t mod_value,
     uint32_t cr0,
     uint32_t cr1)
 {
-    uint32_t product_vec[2];
-    product_vec[0] = static_cast<uint32_t>(product & 0xFFFFFFFFu);
-    product_vec[1] = static_cast<uint32_t>((product >> 32) & 0xFFFFFFFFu);
-    
-    uint32_t right_hw;
-    {
-        uint64_t rt_temp = static_cast<uint64_t>(product_vec[0]) * static_cast<uint64_t>(cr0);
-        right_hw = static_cast<uint32_t>((rt_temp >> 32) & 0xFFFFFFFFu);
-    }
-    
-    uint32_t middle_temp[2];
-    {
-        uint64_t mt_temp = static_cast<uint64_t>(product_vec[0]) * static_cast<uint64_t>(cr1);
-        middle_temp[0] = static_cast<uint32_t>(mt_temp & 0xFFFFFFFFu);
-        middle_temp[1] = static_cast<uint32_t>((mt_temp >> 32) & 0xFFFFFFFFu);
-    }
-    
-    uint32_t middle_lw = right_hw + middle_temp[0];
-    uint32_t middle_lw_carry = static_cast<uint8_t>(middle_lw < right_hw);
-    uint32_t middle_hw = middle_temp[1] + middle_lw_carry;
-    
-    uint32_t middle2_temp[2];
-    {
-        uint64_t mt2_temp = static_cast<uint64_t>(product_vec[1]) * static_cast<uint64_t>(cr0);
-        middle2_temp[0] = static_cast<uint32_t>(mt2_temp & 0xFFFFFFFFu);
-        middle2_temp[1] = static_cast<uint32_t>((mt2_temp >> 32) & 0xFFFFFFFFu);
-    }
-    
-    uint32_t middle2_lw = middle_lw + middle2_temp[0];
-    uint32_t middle2_lw_carry = static_cast<uint8_t>(middle2_lw < middle_lw);
-    uint32_t middle2_hw = middle2_temp[1] + middle2_lw_carry;
-    
-    uint32_t tmp = product_vec[1] * cr1 + middle_hw + middle2_hw;
-    tmp = product_vec[0] - tmp * mod_value;
-    
-    int32_t is_ge_q = static_cast<int32_t>(tmp >= mod_value);
-    uint32_t mask = static_cast<uint32_t>(-is_ge_q);
-    return tmp - (mod_value & mask);
+    uint32_t prod_lo = static_cast<uint32_t>(product);
+    uint32_t prod_hi = static_cast<uint32_t>(product >> 32);
+
+    uint64_t tmp0 = static_cast<uint64_t>(prod_lo) * cr0;
+    uint64_t tmp1 = static_cast<uint64_t>(prod_lo) * cr1;
+    uint64_t tmp2 = static_cast<uint64_t>(prod_hi) * cr0;
+
+    uint32_t right_hw = static_cast<uint32_t>(tmp0 >> 32);
+    uint32_t mid_lo = right_hw + static_cast<uint32_t>(tmp1);
+    uint32_t mid_hi = static_cast<uint32_t>(tmp1 >> 32) + (mid_lo < right_hw);
+    uint32_t mid2_lo = mid_lo + static_cast<uint32_t>(tmp2);
+    uint32_t mid2_hi = static_cast<uint32_t>(tmp2 >> 32) + (mid2_lo < mid_lo);
+
+    uint32_t tmp = prod_hi * cr1 + mid_hi + mid2_hi;
+    tmp = prod_lo - tmp * mod_value;
+
+    if (tmp >= mod_value) tmp -= mod_value;
+    return tmp;
 }
 
-// ============================================================================
-// Original Barrett reduction (legacy API with pointer)
-// ============================================================================
-
-// Barrett reduction: val mod q using precomputed const_ratio (handles signed input)
 inline uint32_t barrett_reduce_64(
     int64_t val,
     uint32_t mod_value,
     const uint32_t* const_ratio,
     bool negate_result = false)
 {
-    uint64_t coeff_abs = (val < 0) ? static_cast<uint64_t>(-val) : static_cast<uint64_t>(val);
-    uint32_t sign_mask = static_cast<uint32_t>(val < 0);
-    
-    uint32_t coeff_abs_vec[2];
-    coeff_abs_vec[0] = static_cast<uint32_t>(coeff_abs & 0xFFFFFFFF);
-    coeff_abs_vec[1] = static_cast<uint32_t>((coeff_abs >> 32) & 0xFFFFFFFF);
-    
-    uint32_t right_hw;
-    {
-        uint64_t res_temp = static_cast<uint64_t>(coeff_abs_vec[0]) * 
-                            static_cast<uint64_t>(const_ratio[0]);
-        right_hw = static_cast<uint32_t>((res_temp >> 32) & 0xFFFFFFFF);
-    }
-    
-    uint32_t middle_temp[2];
-    {
-        uint64_t res_temp = static_cast<uint64_t>(coeff_abs_vec[0]) * 
-                            static_cast<uint64_t>(const_ratio[1]);
-        middle_temp[0] = static_cast<uint32_t>(res_temp & 0xFFFFFFFF);
-        middle_temp[1] = static_cast<uint32_t>((res_temp >> 32) & 0xFFFFFFFF);
-    }
-    
-    uint32_t middle_lw = right_hw + middle_temp[0];
-    uint32_t middle_lw_carry = static_cast<uint8_t>(middle_lw < right_hw);
-    uint32_t middle_hw = middle_temp[1] + middle_lw_carry;
-    
-    uint32_t middle2_temp[2];
-    {
-        uint64_t res_temp = static_cast<uint64_t>(coeff_abs_vec[1]) * 
-                            static_cast<uint64_t>(const_ratio[0]);
-        middle2_temp[0] = static_cast<uint32_t>(res_temp & 0xFFFFFFFF);
-        middle2_temp[1] = static_cast<uint32_t>((res_temp >> 32) & 0xFFFFFFFF);
-    }
-    
-    uint32_t middle2_lw = middle_lw + middle2_temp[0];
-    uint32_t middle2_lw_carry = static_cast<uint8_t>(middle2_lw < middle_lw);
-    uint32_t middle2_hw = middle2_temp[1] + middle2_lw_carry;
-    
-    uint32_t tmp = coeff_abs_vec[1] * const_ratio[1] + middle_hw + middle2_hw;
-    tmp = coeff_abs_vec[0] - tmp * mod_value;
-    
-    {
-        int32_t is_ge_q = static_cast<int32_t>(tmp >= mod_value);
-        uint32_t mask = static_cast<uint32_t>(-is_ge_q);
-        tmp = tmp - (mod_value & mask);
-    }
-    
-    uint32_t result = ((mod_value - tmp) & (-sign_mask)) + (tmp & (sign_mask - 1));
-    
-    if (negate_result) {
-        int32_t non_zero = static_cast<int32_t>(result != 0);
-        uint32_t neg_mask = static_cast<uint32_t>(-non_zero);
-        result = (mod_value - result) & neg_mask;
-    }
-    
-    return result;
+    return barrett_reduce_64_core(val, mod_value, const_ratio[0], const_ratio[1], negate_result);
 }
 
-// Barrett reduction for unsigned 64-bit product
 inline uint32_t barrett_reduce_u64(
     uint64_t product,
     uint32_t mod_value,
     const uint32_t* const_ratio)
 {
-    uint32_t product_vec[2];
-    product_vec[0] = static_cast<uint32_t>(product & 0xFFFFFFFFu);
-    product_vec[1] = static_cast<uint32_t>((product >> 32) & 0xFFFFFFFFu);
-    
-    uint32_t right_hw;
-    {
-        uint64_t rt_temp = static_cast<uint64_t>(product_vec[0]) * 
-                           static_cast<uint64_t>(const_ratio[0]);
-        right_hw = static_cast<uint32_t>((rt_temp >> 32) & 0xFFFFFFFFu);
-    }
-    
-    uint32_t middle_temp[2];
-    {
-        uint64_t mt_temp = static_cast<uint64_t>(product_vec[0]) * 
-                           static_cast<uint64_t>(const_ratio[1]);
-        middle_temp[0] = static_cast<uint32_t>(mt_temp & 0xFFFFFFFFu);
-        middle_temp[1] = static_cast<uint32_t>((mt_temp >> 32) & 0xFFFFFFFFu);
-    }
-    
-    uint32_t middle_lw = right_hw + middle_temp[0];
-    uint32_t middle_lw_carry = static_cast<uint8_t>(middle_lw < right_hw);
-    uint32_t middle_hw = middle_temp[1] + middle_lw_carry;
-    
-    uint32_t middle2_temp[2];
-    {
-        uint64_t mt2_temp = static_cast<uint64_t>(product_vec[1]) * 
-                            static_cast<uint64_t>(const_ratio[0]);
-        middle2_temp[0] = static_cast<uint32_t>(mt2_temp & 0xFFFFFFFFu);
-        middle2_temp[1] = static_cast<uint32_t>((mt2_temp >> 32) & 0xFFFFFFFFu);
-    }
-    
-    uint32_t middle2_lw = middle_lw + middle2_temp[0];
-    uint32_t middle2_lw_carry = static_cast<uint8_t>(middle2_lw < middle_lw);
-    uint32_t middle2_hw = middle2_temp[1] + middle2_lw_carry;
-    
-    uint32_t tmp = product_vec[1] * const_ratio[1] + middle_hw + middle2_hw;
-    tmp = product_vec[0] - tmp * mod_value;
-    
-    int32_t is_ge_q = static_cast<int32_t>(tmp >= mod_value);
-    uint32_t mask = static_cast<uint32_t>(-is_ge_q);
-    return tmp - (mod_value & mask);
+    return barrett_reduce_u64_core(product, mod_value, const_ratio[0], const_ratio[1]);
 }
 
 inline uint32_t mod_add(uint32_t a, uint32_t b, uint32_t mod_value)

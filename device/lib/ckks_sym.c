@@ -313,154 +313,6 @@ bool ckks_next_prime_sym(Parms *parms, ZZ *s)
     return ret;
 }
 
-static void ckks_combined_encode_encrypt_sym_impl(
-    int pipeline_index,
-    const Parms* parms,              // CKKS parameters
-    const flpt* values,              // Raw input values to encode
-    size_t values_len,               // Number of input values
-    SE_PRNG* shareable_prng,         // PRNG for sampling 'a'
-    SE_PRNG* error_prng,             // PRNG for sampling error
-    ZZ* s_small,                     // Secret key in small form
-    ZZ* ntt_pte,                     // Scratch space for NTT of plaintext+error
-    ZZ* ntt_roots,                   // Space for NTT roots
-    ZZ* c0_s,                        // Output: 1st ciphertext component
-    ZZ* c1,                          // Output: 2nd ciphertext component
-    ZZ* s_save,                      // Optional: Save expanded s (for testing)
-    ZZ* c1_save,                     // Optional: Save c1 (for testing)
-    complex_double* encoding_buffer, // Buffer for encoding (can be NULL)
-    uint16_t* index_map              // Index map (can be NULL depending on config)
-)
-{
-    se_assert(parms != NULL);
-    const PolySizeType n = parms->coeff_count;
-    const size_t logn = parms->logn;
-    const Modulus* mod = parms->curr_modulus;
-    
-    // ==============================================================
-    //   Create local working buffers for processing
-    // ==============================================================
-    
-    // For expanded secret key
-    ZZ* local_expanded_s = (ZZ*)calloc(n, sizeof(ZZ));
-    if (!local_expanded_s) {
-        printf("Memory allocation failed for expanded secret key\n");
-        return;
-    }
-    
-    // For error samples
-    int8_t* local_error_samples = (int8_t*)calloc(n, sizeof(int8_t));
-    if (!local_error_samples) {
-        printf("Memory allocation failed for error samples\n");
-        free(local_expanded_s);
-        return;
-    }
-    
-    // For plaintext with error
-    int64_t* local_pt_with_error = (int64_t*)calloc(n, sizeof(int64_t));
-    if (!local_pt_with_error) {
-        printf("Memory allocation failed for plaintext with error\n");
-        free(local_expanded_s);
-        free(local_error_samples);
-        return;
-    }
-    
-    // For uniform polynomial (c1)
-    ZZ* local_uniform_poly = (ZZ*)calloc(n, sizeof(ZZ));
-    if (!local_uniform_poly) {
-        printf("Memory allocation failed for uniform polynomial\n");
-        free(local_expanded_s);
-        free(local_error_samples);
-        free(local_pt_with_error);
-        return;
-    }
-
-    // ==============================================================
-    //   Early processing section
-    // ==============================================================
-    
-    // Expand secret key
-    expand_poly_ternary(s_small, parms, local_expanded_s);
-    
-    // Sample uniform polynomial
-    sample_poly_uniform(parms, shareable_prng, local_uniform_poly);
-    
-    // Sample error values
-    for (size_t i = 0; i < n; i++) {
-        int8_t temp_buffer[1] = {0};
-        sample_poly_cbd_generic(1, error_prng, temp_buffer);
-        local_error_samples[i] = temp_buffer[0];
-    }
-
-    // ==============================================================
-    //                   Pre-Encoding section
-    // ==============================================================
-    
-    // Clear the encoding buffer if values are provided
-    if (values != NULL && encoding_buffer != NULL) {
-        memset(encoding_buffer, 0, n * sizeof(complex_double));
-        
-        // Place values in complex array for encoding using the index map
-        size_t slot_count = n / 2;
-        for (size_t i = 0; i < values_len; i++) {
-            se_assert(index_map);
-            uint16_t index1_rev = index_map[i];
-            uint16_t index2_rev = index_map[i + slot_count];
-            se_assert(index1_rev < n);
-            se_assert(index2_rev < n);
-            
-            // C standard version without direct complex manipulation
-            double val_real = (double)(values[i]);
-            ((double*)encoding_buffer)[2*index1_rev] = val_real;     // Real part
-            ((double*)encoding_buffer)[2*index1_rev+1] = 0.0;        // Imaginary part
-            ((double*)encoding_buffer)[2*index2_rev] = val_real;     // Real part
-            ((double*)encoding_buffer)[2*index2_rev+1] = 0.0;        // Imaginary part
-        }
-    }
-
-    // ==============================================================
-    //   Call the SYCL implementation with unpacked struct values
-    // ==============================================================
-    // Extract values from the Modulus struct
-    uint32_t mod32 = (uint32_t)mod->value;
-    const uint32_t* const_ratio32 = (const uint32_t*)(mod->const_ratio);
-    
-    // Call the SYCL implementation with extracted values
-    SYCL_combined_encrypt_pipeline(
-    pipeline_index,
-    /* parms related values */
-    (size_t)n,                      // Polynomial degree
-    logn,                           // Log of polynomial degree
-    parms->scale,                   // Scale value
-    
-    /* modulus related values */
-    mod32,                          // Modulus value (q)
-    const_ratio32,                  // Const ratio for Barrett reduction
-    
-    /* data buffers */
-    encoding_buffer,                 // Buffer for encoding (complex_double*)
-    (uint32_t*)local_expanded_s,     // Expanded secret key, cast from ZZ* to uint32_t*
-    (uint32_t*)local_uniform_poly,   // Uniform polynomial (c1), cast from ZZ* to uint32_t*
-    local_error_samples,             // Error samples (int8_t*)
-    local_pt_with_error,             // Plaintext + error (int64_t*)
-    (uint32_t*)ntt_pte,              // Scratch space for NTT, cast from ZZ* to uint32_t*
-    (uint32_t*)c0_s,                 // Output: 1st ciphertext component, cast from ZZ* to uint32_t*
-    (uint32_t*)c1,                   // Output: 2nd ciphertext component, cast from ZZ* to uint32_t*
-    (uint32_t*)s_save,               // Optional: Save expanded s (for testing), cast from ZZ* to uint32_t*
-    (uint32_t*)c1_save               // Optional: Save c1 (for testing), cast from ZZ* to uint32_t*
-);
-    
-    
-
-    // ==============================================================
-    //                      Cleanup section
-    // ==============================================================
-    
-    free(local_expanded_s);
-    free(local_error_samples);
-    free(local_pt_with_error);
-    free(local_uniform_poly);
-}
-
 void ckks_combined_encode_encrypt_sym(
     const Parms* parms,
     const flpt* values,
@@ -477,30 +329,78 @@ void ckks_combined_encode_encrypt_sym(
     complex_double* encoding_buffer,
     uint16_t* index_map)
 {
-    ckks_combined_encode_encrypt_sym_impl(0, parms, values, values_len, shareable_prng, error_prng, s_small,
-                                          ntt_pte, ntt_roots, c0_s, c1, s_save, c1_save, encoding_buffer,
-                                          index_map);
-}
+    (void)ntt_roots;
+    se_assert(parms != NULL);
+    const PolySizeType n = parms->coeff_count;
+    const Modulus* mod = parms->curr_modulus;
 
-// Pipeline-indexed entry point to allow concurrent launches on independent pipe sets.
-void ckks_combined_encode_encrypt_sym_pipeline(
-    int pipeline_index,
-    const Parms* parms,
-    const flpt* values,
-    size_t values_len,
-    SE_PRNG* shareable_prng,
-    SE_PRNG* error_prng,
-    ZZ* s_small,
-    ZZ* ntt_pte,
-    ZZ* ntt_roots,
-    ZZ* c0_s,
-    ZZ* c1,
-    ZZ* s_save,
-    ZZ* c1_save,
-    complex_double* encoding_buffer,
-    uint16_t* index_map)
-{
-    ckks_combined_encode_encrypt_sym_impl(pipeline_index, parms, values, values_len, shareable_prng,
-                                          error_prng, s_small, ntt_pte, ntt_roots, c0_s, c1, s_save,
-                                          c1_save, encoding_buffer, index_map);
+    ZZ* local_expanded_s = (ZZ*)calloc(n, sizeof(ZZ));
+    int8_t* local_error_samples = (int8_t*)calloc(n, sizeof(int8_t));
+    ZZ* local_uniform_poly = (ZZ*)calloc(n, sizeof(ZZ));
+
+    if (!local_expanded_s || !local_error_samples || !local_uniform_poly) {
+        printf("Memory allocation failed\n");
+        free(local_expanded_s);
+        free(local_error_samples);
+        free(local_uniform_poly);
+        return;
+    }
+
+    expand_poly_ternary(s_small, parms, local_expanded_s);
+    sample_poly_uniform(parms, shareable_prng, local_uniform_poly);
+
+    for (size_t i = 0; i < n; i++) {
+        int8_t temp_buffer[1] = {0};
+        sample_poly_cbd_generic(1, error_prng, temp_buffer);
+        local_error_samples[i] = temp_buffer[0];
+    }
+
+    if (values != NULL && encoding_buffer != NULL) {
+        memset(encoding_buffer, 0, n * sizeof(complex_double));
+        size_t slot_count = n / 2;
+        for (size_t i = 0; i < values_len; i++) {
+            se_assert(index_map);
+            uint16_t index1_rev = index_map[i];
+            uint16_t index2_rev = index_map[i + slot_count];
+            se_assert(index1_rev < n);
+            se_assert(index2_rev < n);
+            double val_real = (double)(values[i]);
+            ((double*)encoding_buffer)[2*index1_rev] = val_real;
+            ((double*)encoding_buffer)[2*index1_rev+1] = 0.0;
+            ((double*)encoding_buffer)[2*index2_rev] = val_real;
+            ((double*)encoding_buffer)[2*index2_rev+1] = 0.0;
+        }
+    }
+
+    uint32_t mod32 = (uint32_t)mod->value;
+
+    double scales[SYCL_NUM_MODULI] = {parms->scale, parms->scale, parms->scale};
+    uint32_t mod_values[SYCL_NUM_MODULI] = {mod32, mod32, mod32};
+    uint32_t const_ratios[SYCL_NUM_MODULI * 2] = {
+        mod->const_ratio[0], mod->const_ratio[1],
+        mod->const_ratio[0], mod->const_ratio[1],
+        mod->const_ratio[0], mod->const_ratio[1]
+    };
+
+    uint32_t* secret_keys[SYCL_NUM_MODULI] = {
+        (uint32_t*)local_expanded_s, (uint32_t*)local_expanded_s, (uint32_t*)local_expanded_s
+    };
+    uint32_t* uniform_polys[SYCL_NUM_MODULI] = {
+        (uint32_t*)local_uniform_poly, (uint32_t*)local_uniform_poly, (uint32_t*)local_uniform_poly
+    };
+    uint32_t* c0_outputs[SYCL_NUM_MODULI] = {(uint32_t*)c0_s, (uint32_t*)c0_s, (uint32_t*)c0_s};
+    uint32_t* c1_outputs[SYCL_NUM_MODULI] = {(uint32_t*)c1, (uint32_t*)c1, (uint32_t*)c1};
+    uint32_t* s_save_arr[SYCL_NUM_MODULI] = {(uint32_t*)s_save, NULL, NULL};
+    uint32_t* c1_save_arr[SYCL_NUM_MODULI] = {(uint32_t*)c1_save, NULL, NULL};
+    uint32_t* ntt_pte_arr[SYCL_NUM_MODULI] = {(uint32_t*)ntt_pte, NULL, NULL};
+
+    SYCL_encrypt(
+        (size_t)n, scales, mod_values, const_ratios,
+        encoding_buffer, local_error_samples,
+        (const uint32_t* const*)secret_keys, (const uint32_t* const*)uniform_polys,
+        c0_outputs, c1_outputs, s_save_arr, c1_save_arr, ntt_pte_arr);
+
+    free(local_expanded_s);
+    free(local_error_samples);
+    free(local_uniform_poly);
 }

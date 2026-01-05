@@ -146,8 +146,8 @@ void SYCL_test_ckks_sym_base(size_t n, size_t nprimes, bool test_message)
             prepare_parms_for_prime(&parms, &mod_parms[p], p, s_small);
             scales[p] = mod_parms[p].scale;
             mod_values[p] = (uint32_t)mod_parms[p].curr_modulus->value;
-            const_ratios[p * 2] = (uint32_t)mod_parms[p].curr_modulus->const_ratio[0];
-            const_ratios[p * 2 + 1] = (uint32_t)mod_parms[p].curr_modulus->const_ratio[1];
+            const_ratios[p * 2] = mod_parms[p].curr_modulus->const_ratio[0];
+            const_ratios[p * 2 + 1] = mod_parms[p].curr_modulus->const_ratio[1];
         }
 
         memset(encoding_buffer, 0, n * sizeof(complex_double));
@@ -177,9 +177,9 @@ void SYCL_test_ckks_sym_base(size_t n, size_t nprimes, bool test_message)
         }
 
         SYCL_encrypt(
-            n, parms.logn, scales, mod_values, const_ratios,
+            n, scales, mod_values, const_ratios,
             encoding_buffer, error_samples,
-            (uint32_t* const*)expanded_s, (uint32_t* const*)uniform_poly,
+            (const uint32_t* const*)expanded_s, (const uint32_t* const*)uniform_poly,
             (uint32_t**)c0, (uint32_t**)c1,
             (uint32_t**)s_test_save, (uint32_t**)c1_test_save,
             (uint32_t**)ntt_pte);

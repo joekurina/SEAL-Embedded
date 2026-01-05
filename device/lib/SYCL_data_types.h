@@ -49,14 +49,11 @@ static_assert(sizeof(u32x4) == sizeof(uint32_t) * 4, "u32x4 size mismatch");
 static_assert(sizeof(i8x4) == sizeof(int8_t) * 4, "i8x4 size mismatch");
 static_assert(sizeof(i64x4) == sizeof(int64_t) * 4, "i64x4 size mismatch");
 
-struct SharedInputBlock {
+struct PipelineInputBlock {
     encoding_block encoding;
     i8x4 error;
-};
-
-struct PerModulusInputBlock {
-    u32x4 secret_key;
-    u32x4 uniform_poly;
+    u32x4 secret_key[NUM_MODULI];
+    u32x4 c1[NUM_MODULI];
 };
 
 struct PerModulusOutputBlock {
