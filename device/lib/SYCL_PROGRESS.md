@@ -185,27 +185,36 @@ uint32_t barrett_reduce_u64_core(uint64_t product, uint32_t mod, uint32_t cr0, u
 ```
 
 ### Known Moduli
-| Modulus | const_ratio[0] | const_ratio[1] | Bit Width |
-|---------|----------------|----------------|-----------|
-| 134012929 | 0x0c84dfe5 | 0x00000020 | 27-bit |
-| 134111233 | 0x06814e43 | 0x00000020 | 27-bit |
-| 134176769 | 0x02802e03 | 0x00000020 | 27-bit |
-| 1053818881 | 0x135bf4ba | 0x00000004 | 30-bit |
-| 1054015489 | 0x132a2218 | 0x00000004 | 30-bit |
-| 1054212097 | 0x12f85437 | 0x00000004 | 30-bit |
+All 16 moduli (3 × 27-bit + 13 × 30-bit) are available in `SYCL_common.h`. See the "Available Prime Moduli" section below for full table.
 
 ---
 
-## Resource Usage (from FPGA report)
+## Resource Usage (from FPGA report, 2026-01-05)
 
+### Total Utilization (Intel Agilex7)
+| Resource | Used | Available | Utilization |
+|----------|------|-----------|-------------|
+| ALUTs | 414,771 | 974,400 | **67.9%** |
+| FFs | 505,403 | 1,948,800 | **46.7%** |
+| RAMs | 1,436 | 7,110 | **25.9%** |
+| DSPs | 1,170 | 4,510 | **20.2%** |
+| MLABs | 2,026 | 48,720 | **25.9%** |
+
+### Per-Kernel Breakdown
 | Kernel | ALUTs | FFs | RAMs | DSPs |
-|--------|-------|-----|------|------|
-| IFFTKernel | 105K | 89K | 277 | 108 |
-| NTTKernel x6 | 161K | 184K | 624 | 750 |
-| ScaleReduce x3 | 55K | 41K | 15 | 108 |
-| PolyMultNegAdd x3 | 15K | 17K | 15 | 72+120 frac |
-| Entry/Exit | ~30K | ~85K | 87 | 0 |
-| **Total** | **39%** | **24%** | **19%** | **23%** |
+|--------|------:|----:|-----:|-----:|
+| IFFTKernel | 146,968 | 142,328 | 360 | 240 |
+| NTTKernelA × 3 | 80,346 | 91,821 | 312 | 375 |
+| NTTKernelB × 3 | 80,346 | 91,821 | 312 | 375 |
+| ScaleAndReduce × 3 | 55,706 | 40,779 | 15 | 108 |
+| EntryKernel | 9,931 | 42,010 | 85 | 0 |
+| ExitKernel × 3 | 24,144 | 52,911 | 0 | 0 |
+| PolyMultNegAdd × 3 | 14,838 | 17,430 | 15 | 72 |
+
+### Key Observations
+- IFFT dominates at 147K ALUTs (35% of kernel system) - RTL replacement recommended
+- RTL NTT cores efficient at ~27K ALUTs each vs software IFFT's 147K
+- 32% ALUTs headroom available for additional moduli or features
 
 ---
 
@@ -257,8 +266,143 @@ Test output verification:
 
 ---
 
+## Supported Parameters & Moduli
+
+### Maximum Moduli by Polynomial Degree
+
+| N | Max Primes | Prime Bit-Width | Default Scale | Slots |
+|---|------------|-----------------|---------------|-------|
+| 1024 | 1 | 27-bit | 2^20 | 512 |
+| 2048 | 1 | 27-bit | 2^25 | 1024 |
+| **4096** | **3** | 27-bit or 30-bit | 2^20 or 2^25 | 2048 |
+| **8192** | **6** | 30-bit | 2^25 | 4096 |
+| **16384** | **13** | 30-bit | 2^25 | 8192 |
+
+### Available Prime Moduli
+
+**27-bit primes** (q ≡ 1 mod 8192, for N ≤ 4096):
+| Index | Modulus | const_ratio[0] | const_ratio[1] |
+|-------|---------|----------------|----------------|
+| 0 | 134012929 | 0x0c84dfe5 | 0x00000020 |
+| 1 | 134111233 | 0x06814e43 | 0x00000020 |
+| 2 | 134176769 | 0x02802e03 | 0x00000020 |
+
+**30-bit primes** (q ≡ 1 mod 65536, for N ≥ 4096):
+| Index | Modulus | const_ratio[0] | const_ratio[1] | In SYCL |
+|-------|---------|----------------|----------------|---------|
+| 0 | 1053818881 | 0x135bf4ba | 0x00000004 | ✓ |
+| 1 | 1054015489 | 0x132a2218 | 0x00000004 | ✓ |
+| 2 | 1054212097 | 0x12f85437 | 0x00000004 | ✓ |
+| 3 | 1055260673 | 0x11ef051e | 0x00000004 | ✓ |
+| 4 | 1056178177 | 0x11074e88 | 0x00000004 | ✓ |
+| 5 | 1056440321 | 0x10c52d4a | 0x00000004 | ✓ |
+| 6 | 1058209793 | 0x0f07a84a | 0x00000004 | ✓ |
+| 7 | 1060175873 | 0x0d1a6142 | 0x00000004 | ✓ |
+| 8 | 1060700161 | 0x0c9725e9 | 0x00000004 | ✓ |
+| 9 | 1060765697 | 0x0c86c0d4 | 0x00000004 | ✓ |
+| 10 | 1061093377 | 0x0c34cf30 | 0x00000004 | ✓ |
+| 11 | 1062469633 | 0x0add3267 | 0x00000004 | ✓ |
+| 12 | 1062535169 | 0x0accdb49 | 0x00000004 | ✓ |
+
+### Current SYCL Pipeline Limitations
+
+The current implementation is hardcoded for **N=4096 with 3 moduli**.
+
+To support **4+ moduli** (requires N=8192+):
+1. Change `SYCL_NUM_MODULI` in `SYCL_ckks_sym.h`
+2. Add Barrett constants to `SYCL_common.h` for indices 3-5 (or more)
+3. Add `PipeSet<3>`, `PipeSet<4>`, etc. in `SYCL_pipes.h`
+4. Add kernel template instantiations for P=3, 4, 5 in `SYCL_ckks_sym.cpp`
+5. Update `SYCL_data_types.h` for larger `PipelineInputBlock`
+
+To support **N=8192**:
+1. Change `POLY_N` and `POLY_LOGN` in `SYCL_common.h`
+2. Provide RTL NTT core for 8192-point transform (or use software NTT)
+3. Update `NUM_BLOCKS` to 2048
+
+---
+
+---
+
+## Investigation: Pipe Resource Scaling
+
+### Current Pipe Configuration
+```cpp
+constexpr size_t PIPE_CAPACITY = NUM_BLOCKS;  // = POLY_N / LANES = 1024 for N=4096
+```
+
+### Resource Impact (from FPGA report)
+| Pipe Type | Width | Depth | Count | Total RAMs |
+|-----------|-------|-------|-------|------------|
+| encoding_block | 512b | 1024 | ~7 | ~182 |
+| u32x4 | 128b | 1024 | ~18 | ~126 |
+| i8x4 | 32b | 1024 | 3 | ~6 |
+| NTTRTLData | 128b | 1024 | 6 | ~42 |
+
+Total pipe RAMs: ~356 (25% of kernel system RAMs)
+
+### Scaling Problem
+For N=8192: `NUM_BLOCKS = 2048` → Pipe depths double → RAM usage doubles
+
+### Why Full-Depth Pipes Are Currently Required
+
+**The IFFT Bottleneck:**
+```cpp
+// SYCL_ifft.h - IFFT reads ALL inputs before producing ANY outputs
+complex_double data[POLY_N];  // Local buffer for entire polynomial
+
+for (size_t blk = 0; blk < NUM_BLOCKS; ++blk) {
+    data[blk*LANES...] = SharedToIFFTPipe::read();  // Consume all inputs
+}
+// ... IFFT computation ...
+for (size_t blk = 0; blk < NUM_BLOCKS; ++blk) {
+    IFFTToScaleReducePipes::write(data[blk*LANES...]);  // Produce all outputs
+}
+```
+
+The IFFT is a global transform that cannot stream - it needs all N inputs before producing any outputs. This creates a "burst" pattern requiring full-depth buffering.
+
+### Strategies to Reduce Pipe Depth
+
+| Strategy | Feasibility | Impact |
+|----------|-------------|--------|
+| **RTL IFFT with streaming** | High | RTL can pipeline butterfly stages, enabling smaller input buffers |
+| **Explicit `min_capacity` hints** | Medium | `[[intel::min_capacity(64)]]` - but scheduler may override |
+| **Split polynomial processing** | Low | Breaks IFFT algorithm correctness |
+| **Multi-polynomial pipelining** | Medium | Process multiple polynomials concurrently with smaller per-poly buffers |
+
+### Recommended Approach
+
+1. **Short-term**: Accept current pipe depths; focus on RTL IFFT which will fundamentally change the data flow
+
+2. **With RTL IFFT**: The RTL core likely streams data differently:
+   - May accept inputs while computing
+   - May produce outputs before all inputs consumed
+   - Enables `PIPE_CAPACITY = 64-256` instead of `NUM_BLOCKS`
+
+3. **Explicit depth control** (after RTL integration):
+   ```cpp
+   // Use min_capacity for pipes where producer/consumer rates match
+   using MyPipe = sycl::ext::intel::pipe<MyPipeId, u32x4, 64,
+       sycl::ext::intel::experimental::min_capacity<64>>;
+   ```
+
+### Estimated Savings with RTL IFFT + Reduced Pipes
+| Configuration | Pipe RAMs | Savings |
+|---------------|-----------|---------|
+| Current (N=4096, depth=1024) | ~356 | baseline |
+| N=8192, depth=2048 | ~712 | -100% |
+| N=8192, depth=256 (with RTL) | ~89 | +75% vs scaled |
+
+---
+
 ## Next Steps
 
-1. **RTL IFFT Integration** - Replace software IFFT kernel with RTL implementation
+1. **RTL IFFT Integration** - Replace software IFFT kernel with RTL implementation (enables pipe optimization)
 2. **Multi-prime Optimization** - Currently uses same modulus for all 3 primes in test mode
 3. **Hardware Synthesis** - Full FPGA bitstream generation and on-device testing
+4. **N=8192 Support** - Extend pipeline to support larger polynomial degrees with 6 moduli
+
+## Completed
+
+- ✓ **Barrett Constants** - All 16 moduli (3 × 27-bit + 13 × 30-bit) now in `SYCL_common.h`

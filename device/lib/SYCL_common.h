@@ -26,13 +26,26 @@ struct BarrettConstants {
 // Known moduli for n=4096 (27-bit) and n=8192/16384 (30-bit)
 constexpr BarrettConstants BARRETT_TABLE[] = {
     // 27-bit primes (n=4096 with SE_DEFAULT_4K_27BIT)
-    { 134012929u, 0x0c84dfe5u, 0x00000020u },
-    { 134111233u, 0x06814e43u, 0x00000020u },
-    { 134176769u, 0x02802e03u, 0x00000020u },
+    { 134012929u,  0x0c84dfe5u, 0x00000020u },
+    { 134111233u,  0x06814e43u, 0x00000020u },
+    { 134176769u,  0x02802e03u, 0x00000020u },
     // 30-bit primes (n=4096 default, n=8192, n=16384)
+    // Indices 0-2: Used for n=4096
     { 1053818881u, 0x135bf4bau, 0x00000004u },
     { 1054015489u, 0x132a2218u, 0x00000004u },
     { 1054212097u, 0x12f85437u, 0x00000004u },
+    // Indices 3-5: Additional for n=8192 (6 moduli total)
+    { 1055260673u, 0x11ef051eu, 0x00000004u },
+    { 1056178177u, 0x11074e88u, 0x00000004u },
+    { 1056440321u, 0x10c52d4au, 0x00000004u },
+    // Indices 6-12: Additional for n=16384 (13 moduli total)
+    { 1058209793u, 0x0f07a84au, 0x00000004u },
+    { 1060175873u, 0x0d1a6142u, 0x00000004u },
+    { 1060700161u, 0x0c9725e9u, 0x00000004u },
+    { 1060765697u, 0x0c86c0d4u, 0x00000004u },
+    { 1061093377u, 0x0c34cf30u, 0x00000004u },
+    { 1062469633u, 0x0add3267u, 0x00000004u },
+    { 1062535169u, 0x0accdb49u, 0x00000004u },
 };
 constexpr size_t BARRETT_TABLE_SIZE = sizeof(BARRETT_TABLE) / sizeof(BARRETT_TABLE[0]);
 
@@ -47,6 +60,16 @@ inline bool get_barrett_constants(uint32_t mod_value, uint32_t& cr_lo, uint32_t&
         case 1053818881u: cr_lo = 0x135bf4bau; cr_hi = 0x00000004u; return true;
         case 1054015489u: cr_lo = 0x132a2218u; cr_hi = 0x00000004u; return true;
         case 1054212097u: cr_lo = 0x12f85437u; cr_hi = 0x00000004u; return true;
+        case 1055260673u: cr_lo = 0x11ef051eu; cr_hi = 0x00000004u; return true;
+        case 1056178177u: cr_lo = 0x11074e88u; cr_hi = 0x00000004u; return true;
+        case 1056440321u: cr_lo = 0x10c52d4au; cr_hi = 0x00000004u; return true;
+        case 1058209793u: cr_lo = 0x0f07a84au; cr_hi = 0x00000004u; return true;
+        case 1060175873u: cr_lo = 0x0d1a6142u; cr_hi = 0x00000004u; return true;
+        case 1060700161u: cr_lo = 0x0c9725e9u; cr_hi = 0x00000004u; return true;
+        case 1060765697u: cr_lo = 0x0c86c0d4u; cr_hi = 0x00000004u; return true;
+        case 1061093377u: cr_lo = 0x0c34cf30u; cr_hi = 0x00000004u; return true;
+        case 1062469633u: cr_lo = 0x0add3267u; cr_hi = 0x00000004u; return true;
+        case 1062535169u: cr_lo = 0x0accdb49u; cr_hi = 0x00000004u; return true;
         default: return false;
     }
 }
@@ -203,6 +226,16 @@ inline uint8_t get_modulus_selector(uint32_t mod_value)
         case 1053818881u: return 3;
         case 1054015489u: return 4;
         case 1054212097u: return 5;
+        case 1055260673u: return 6;
+        case 1056178177u: return 7;
+        case 1056440321u: return 8;
+        case 1058209793u: return 9;
+        case 1060175873u: return 10;
+        case 1060700161u: return 11;
+        case 1060765697u: return 12;
+        case 1061093377u: return 13;
+        case 1062469633u: return 14;
+        case 1062535169u: return 15;
         default:          return 0;
     }
 }
