@@ -5,11 +5,12 @@
 // ------------------------------------------------------------------------- 
 #ifndef SOFTWARE_MODEL_WRAPPER_THE_FFT_H_
 #define SOFTWARE_MODEL_WRAPPER_THE_FFT_H_
-#include "fft_example_DUT.h"
+class fft_example_DUT;
 
 #ifndef NO_SYCL
 #include <sycl/sycl.hpp>
 #endif
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -53,8 +54,12 @@ CSL_PACKED(typedef struct
 #ifdef FPGA_EMULATOR
 #ifdef NO_SYCL
 the_fft_output_t the_fft(fft_example_DUT* instance, the_fft_input_t input);
+fft_example_DUT* the_fft_new_instance();
+void the_fft_delete_instance(fft_example_DUT* instance);
 #else
 SYCL_EXTERNAL the_fft_output_t the_fft(fft_example_DUT* instance, the_fft_input_t input);
+SYCL_EXTERNAL fft_example_DUT* the_fft_new_instance();
+SYCL_EXTERNAL void the_fft_delete_instance(fft_example_DUT* instance);
 #endif
 #else
 SYCL_EXTERNAL the_fft_output_t the_fft(the_fft_input_t input);

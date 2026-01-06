@@ -2,7 +2,7 @@
 
 FPGA-accelerated CKKS symmetric encryption pipeline for SEAL-Embedded, targeting Intel Agilex7.
 
-**Last Updated**: 2026-01-05
+**Last Updated**: 2026-01-05 (IFFT RTL Integration)
 
 ---
 
@@ -92,7 +92,7 @@ FPGA-accelerated CKKS symmetric encryption pipeline for SEAL-Embedded, targeting
 
 Kernel Count: 17 total
   - EntryKernel:              1
-  - IFFTKernel:               1
+  - IFFTKernel:               1  (RTL)
   - ScaleAndReduceKernel<P>:  3
   - NTTKernelA<P>:            3  (RTL)
   - NTTKernelB<P>:            3  (RTL)
@@ -153,17 +153,19 @@ device/lib/
 ├── pipe_utils.hpp             # Intel PipeArray utilities
 │
 ├── SYCL_entry.h               # EntryKernel (single unified entry point)
-├── SYCL_ifft.h                # IFFTKernel (to be replaced with RTL)
+├── SYCL_ifft.h                # IFFTKernel (RTL-based)
 ├── SYCL_scale_and_reduce.h    # ScaleAndReduceKernel<P>
 ├── SYCL_ntt.h                 # NTTKernel<P, Tag>
 ├── SYCL_poly_mult_neg_add.h   # PolyMultNegAddKernel<P>
 ├── SYCL_pipeline_exit.h       # ExitKernel<P>
 │
-├── SYCL_ckks_sym.cpp          # Pipeline orchestration
+├── SYCL_ckks_sym.cpp          # Pipeline orchestration (includes NWC twist)
 ├── SYCL_ckks_sym.h            # C interface
 └── rtl/
-    ├── the_nwc_4k_ntt_sycl.hpp
-    └── the_nwc_4k_ntt.a
+    ├── the_nwc_4k_ntt_sycl.hpp # NTT RTL header
+    ├── the_nwc_4k_ntt.a        # NTT RTL library
+    ├── the_fft_sycl.hpp        # IFFT RTL header
+    └── the_fft.a               # IFFT RTL library
 ```
 
 ---
@@ -212,9 +214,10 @@ All 16 moduli (3 × 27-bit + 13 × 30-bit) are available in `SYCL_common.h`. See
 | PolyMultNegAdd × 3 | 14,838 | 17,430 | 15 | 72 |
 
 ### Key Observations
-- IFFT dominates at 147K ALUTs (35% of kernel system) - RTL replacement recommended
-- RTL NTT cores efficient at ~27K ALUTs each vs software IFFT's 147K
+- ~~IFFT dominates at 147K ALUTs (35% of kernel system) - RTL replacement recommended~~ **DONE** - IFFT now uses RTL
+- RTL NTT cores efficient at ~27K ALUTs each
 - 32% ALUTs headroom available for additional moduli or features
+- Resource numbers above are from pre-RTL-IFFT build; new report pending
 
 ---
 
@@ -242,6 +245,11 @@ All 16 moduli (3 × 27-bit + 13 × 30-bit) are available in `SYCL_common.h`. See
 ### 5. Barrett Constant Propagation
 - Hardcoded `const_ratio` values for 6 known moduli
 - Switch-based lookup enables FPGA constant propagation
+
+### 6. RTL IFFT Integration (2026-01-05)
+- Replaced software IFFT kernel with DSP Builder-generated RTL core
+- Uses same integration pattern as NTT RTL (emulator instance management)
+- See detailed section below: "RTL IFFT Integration Details"
 
 ---
 
@@ -398,11 +406,202 @@ The IFFT is a global transform that cannot stream - it needs all N inputs before
 
 ## Next Steps
 
-1. **RTL IFFT Integration** - Replace software IFFT kernel with RTL implementation (enables pipe optimization)
+1. ~~**RTL IFFT Integration** - Replace software IFFT kernel with RTL implementation~~ **DONE**
 2. **Multi-prime Optimization** - Currently uses same modulus for all 3 primes in test mode
 3. **Hardware Synthesis** - Full FPGA bitstream generation and on-device testing
 4. **N=8192 Support** - Extend pipeline to support larger polynomial degrees with 6 moduli
+5. **Native NWC Twiddles** - Regenerate IFFT RTL with negacyclic twiddle factors to eliminate host-side twist
 
 ## Completed
 
 - ✓ **Barrett Constants** - All 16 moduli (3 × 27-bit + 13 × 30-bit) now in `SYCL_common.h`
+- ✓ **RTL IFFT Integration** - DSP Builder IFFT core integrated with emulator support (2026-01-05)
+
+---
+
+## RTL IFFT Integration Details
+
+### Overview
+
+The IFFT kernel now uses a DSP Builder-generated RTL core (`the_fft`) instead of software computation. This follows the same integration pattern as the NTT RTL cores.
+
+### NWC (Negacyclic) Twist Preprocessing
+
+**Problem**: CKKS encoding requires a negacyclic IFFT operating on the polynomial ring Z[X]/(X^N + 1), which uses 2N-th roots of unity: ψ = exp(-πi/N). However, the DSP Builder-generated RTL uses standard N-th roots of unity: ω = exp(-2πi/N), corresponding to Z[X]/(X^N - 1).
+
+**Solution**: Apply a "twist" to input data before the standard IFFT. Multiplying each input sample x[k] by ψ^k = exp(πik/N) converts the standard IFFT result into the negacyclic IFFT result.
+
+**Implementation** (`SYCL_ckks_sym.cpp`):
+```cpp
+static void apply_nwc_twist(size_t n, complex_double* data)
+{
+    const double pi_over_n = M_PI / static_cast<double>(n);
+    for (size_t k = 0; k < n; ++k) {
+        double angle = pi_over_n * static_cast<double>(k);
+        complex_double twist(std::cos(angle), std::sin(angle));
+        data[k] *= twist;
+    }
+}
+
+// Called in SYCL_encrypt() before packing input:
+std::vector<complex_double> twisted_encoding(encoding_buffer, encoding_buffer + n);
+apply_nwc_twist(n, twisted_encoding.data());
+```
+
+**Future Optimization**: Regenerate the RTL IFFT with native NWC twiddle factors (ψ^k instead of ω^k) in the DSP Builder twiddle ROM `.hex` files. This would eliminate the host-side twist preprocessing.
+
+### RTL Interface
+
+The IFFT RTL uses the same pattern as NTT:
+
+| Aspect | NTT RTL | IFFT RTL |
+|--------|---------|----------|
+| Header | `the_nwc_4k_ntt_sycl.hpp` | `the_fft_sycl.hpp` |
+| Library | `the_nwc_4k_ntt.a` | `the_fft.a` |
+| Input struct | `the_nwc_4k_ntt_input_t` | `the_fft_input_t` |
+| Output struct | `the_nwc_4k_ntt_output_t` | `the_fft_output_t` |
+| Function | `the_nwc_4k_ntt()` | `the_fft()` |
+| Valid in port | `port_in_v_s` | `port_v_in_s` |
+| Valid out port | `port_out_v_s` | `port_v_out_s` |
+| DUT class | `reg_test_verifyNTT_multi_DUT` | `fft_example_DUT` |
+
+### IFFT RTL I/O Structures
+
+```cpp
+// Input: 4 complex samples per cycle (8 doubles)
+typedef struct {
+    int8_t port_v_in_s;        // Valid signal
+    int8_t port_channel_in_s;  // Channel selector (unused, set to 0)
+    double port_data_in_0re, port_data_in_0im;
+    double port_data_in_1re, port_data_in_1im;
+    double port_data_in_2re, port_data_in_2im;
+    double port_data_in_3re, port_data_in_3im;
+} the_fft_input_t;
+
+// Output: 4 complex samples per cycle (8 doubles)
+typedef struct {
+    int8_t port_v_out_s;       // Valid signal
+    double port_data_out_0re, port_data_out_0im;
+    double port_data_out_1re, port_data_out_1im;
+    double port_data_out_2re, port_data_out_2im;
+    double port_data_out_3re, port_data_out_3im;
+} the_fft_output_t;
+```
+
+### Emulator Instance Management
+
+For `FPGA_EMULATOR` builds, the RTL is simulated via a C++ model requiring instance management:
+
+```cpp
+// Header declarations (the_fft_sycl.hpp)
+#ifdef FPGA_EMULATOR
+SYCL_EXTERNAL the_fft_output_t the_fft(fft_example_DUT* instance, the_fft_input_t input);
+SYCL_EXTERNAL fft_example_DUT* the_fft_new_instance();
+SYCL_EXTERNAL void the_fft_delete_instance(fft_example_DUT* instance);
+#else
+SYCL_EXTERNAL the_fft_output_t the_fft(the_fft_input_t input);
+#endif
+
+// Kernel usage (SYCL_ifft.h)
+#ifdef FPGA_EMULATOR
+fft_example_DUT* rtl_instance = the_fft_new_instance();
+#endif
+
+// ... in loop ...
+#ifdef FPGA_EMULATOR
+the_fft_output_t hw_out = the_fft(rtl_instance, hw_in);
+#else
+the_fft_output_t hw_out = the_fft(hw_in);
+#endif
+
+#ifdef FPGA_EMULATOR
+the_fft_delete_instance(rtl_instance);
+#endif
+```
+
+### DSP Builder Source Modifications
+
+The following modifications were made to the DSP Builder output to enable integration:
+
+#### 1. Header: `the_fft_sycl.hpp`
+
+**Original:**
+```cpp
+#include "fft_example_DUT.h"
+```
+
+**Modified (for device/lib/rtl/ copy):**
+```cpp
+class fft_example_DUT;  // Forward declaration instead of include
+#include <stdint.h>     // For int8_t
+
+// Added instance management declarations:
+#ifdef FPGA_EMULATOR
+SYCL_EXTERNAL fft_example_DUT* the_fft_new_instance();
+SYCL_EXTERNAL void the_fft_delete_instance(fft_example_DUT* instance);
+#endif
+```
+
+#### 2. Source: `the_fft.cpp`
+
+**Original:**
+```cpp
+namespace csl {
+void error(const char* msg) { printf("Error: %s\n", msg); }
+void warning(const char* msg) { printf("Warning: %s\n", msg); }
+void info(const char* msg) { printf("Info: %s\n", msg); }
+}
+```
+
+**Modified:**
+```cpp
+namespace csl {
+#ifdef WRITE_STM_FILES
+void error(const char* msg)   { printf("Error: %s\n", msg); }
+void warning(const char* msg) { printf("Warning: %s\n", msg); }
+void info(const char* msg)    { printf("Info: %s\n", msg); }
+#else
+__attribute__((weak)) void error(const char* msg)   { }
+__attribute__((weak)) void warning(const char* msg) { }
+__attribute__((weak)) void info(const char* msg)    { }
+#endif
+}
+```
+
+**Reason**: Both `the_nwc_4k_ntt.a` and `the_fft.a` define these `csl::` functions. Using `__attribute__((weak))` in the FFT library allows the linker to resolve duplicates without error.
+
+### Build Process for RTL Library
+
+Location: `fft_example_dsp_builder/fft_example/rtl/fft_example_hldlib/`
+
+```bash
+# Clean and rebuild
+rm -f the_fft.o the_fft.a
+./compile.sh
+
+# Copy to device library
+cp the_fft.a the_fft_sycl.hpp /path/to/device/lib/rtl/
+
+# Edit device/lib/rtl/the_fft_sycl.hpp:
+# - Change #include "fft_example_DUT.h" to: class fft_example_DUT;
+# - Add #include <stdint.h>
+```
+
+The `compile.sh` script runs:
+```bash
+fpga_crossgen --target sycl the_fft.xml --cpp_model the_fft.cpp -o the_fft.o \
+    -I. -I../fft_example/cmodel -DFPGA_EMULATOR -DCSL_SYCL -include math.h
+fpga_libtool --target sycl the_fft.o --create the_fft.a
+```
+
+### File Locations
+
+| File | Location | Purpose |
+|------|----------|---------|
+| `the_fft_sycl.hpp` | `device/lib/rtl/` | Header for SYCL kernel (modified) |
+| `the_fft.a` | `device/lib/rtl/` | Compiled RTL library |
+| `the_fft_sycl.hpp` | `fft_example_dsp_builder/.../fft_example_hldlib/` | DSP Builder source header |
+| `the_fft.cpp` | `fft_example_dsp_builder/.../fft_example_hldlib/` | DSP Builder source (modified) |
+| `the_fft.xml` | `fft_example_dsp_builder/.../fft_example_hldlib/` | RTL interface definition |
+| `SYCL_ifft.h` | `device/lib/` | SYCL kernel wrapper |
+| `SYCL_ckks_sym.cpp` | `device/lib/` | NWC twist + pipeline orchestration |

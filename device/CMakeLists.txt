@@ -101,8 +101,9 @@ target_include_directories(${TARGET_NAME} PUBLIC ${SE_ADAPTER_FILE_OUTPUT_DIR})
 target_include_directories(${TARGET_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/lib/rtl>)
 target_link_libraries(${TARGET_NAME} PRIVATE m)
-# Link RTL static library
+# Link RTL static libraries (NTT and FFT/IFFT)
 target_link_libraries(${TARGET_NAME} PRIVATE ${CMAKE_CURRENT_LIST_DIR}/lib/rtl/the_nwc_4k_ntt.a)
+target_link_libraries(${TARGET_NAME} PRIVATE ${CMAKE_CURRENT_LIST_DIR}/lib/rtl/the_fft.a)
 
 if(NOT DEFINED SEAL_EMBEDDED_VERSION)
   set(SEAL_EMBEDDED_VERSION "1.1.0")
@@ -114,8 +115,9 @@ if(SE_BUILD_TYPE STREQUAL "Tests")
     if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/main.c")
         add_executable(seal_embedded_tests ${SE_TESTS_SOURCE_FILES})
         target_link_libraries(seal_embedded_tests PRIVATE m gcc_s c ${TARGET_NAME})
-        # Link RTL static library to tests
+        # Link RTL static libraries to tests (NTT and FFT/IFFT)
         target_link_libraries(seal_embedded_tests PRIVATE ${CMAKE_CURRENT_LIST_DIR}/lib/rtl/the_nwc_4k_ntt.a)
+        target_link_libraries(seal_embedded_tests PRIVATE ${CMAKE_CURRENT_LIST_DIR}/lib/rtl/the_fft.a)
     else()
         message(WARNING "Test sources not found, skipping test executable.")
     endif()
@@ -139,6 +141,7 @@ if(TARGET seal_embedded_tests OR SE_BUILD_TYPE STREQUAL "Lib")
               -I../lib/rtl
               ../lib/SYCL_ckks_sym.cpp
               ../lib/rtl/the_nwc_4k_ntt.a
+              ../lib/rtl/the_fft.a
       COMMENT "Compiling SYCL file to generate FPGA hardware report (minimal flags)"
       VERBATIM
       # Run command from build directory

@@ -3,6 +3,7 @@
 #include "SYCL_common.h"
 #include "SYCL_pipes.h"
 #include "SYCL_data_types.h"
+#include "rtl/the_fft_sycl.hpp"
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
@@ -17,62 +18,52 @@ public:
     void operator()(sycl::handler& h) const {
         h.single_task<IFFTKernelTask>([=]() [[intel::kernel_args_restrict]] {
 
-            complex_double data[POLY_N];
+#ifdef FPGA_EMULATOR
+            fft_example_DUT* rtl_instance = the_fft_new_instance();
+#endif
+
+            size_t output_count = 0;
 
             [[intel::initiation_interval(1)]]
-            for (size_t blk = 0; blk < NUM_BLOCKS; ++blk) {
-                encoding_block block = SharedToIFFTPipe::read();
-                size_t base = blk * LANES;
-                data[base + 0] = block.element0;
-                data[base + 1] = block.element1;
-                data[base + 2] = block.element2;
-                data[base + 3] = block.element3;
-            }
+            while (true) {
+                bool input_valid = false;
+                encoding_block block = SharedToIFFTPipe::read(input_valid);
 
-            constexpr double neg_two_pi_over_2n = -2.0 * M_PI / static_cast<double>(POLY_N << 1);
-            size_t tt = 1;
-            size_t hh = POLY_N >> 1;
+                the_fft_input_t hw_in;
+                hw_in.port_v_in_s = input_valid ? 1 : 0;
+                hw_in.port_channel_in_s = 0;
+                hw_in.port_data_in_0re = block.element0.real();
+                hw_in.port_data_in_0im = block.element0.imag();
+                hw_in.port_data_in_1re = block.element1.real();
+                hw_in.port_data_in_1im = block.element1.imag();
+                hw_in.port_data_in_2re = block.element2.real();
+                hw_in.port_data_in_2im = block.element2.imag();
+                hw_in.port_data_in_3re = block.element3.real();
+                hw_in.port_data_in_3im = block.element3.imag();
 
-            #pragma unroll 4
-            for (size_t i = 0; i < POLY_LOGN; ++i) {
-                size_t j = 0;
-                size_t kstart = 0;
-                for (; j < hh; ++j, kstart += (tt << 1)) {
-                    size_t br = bitrev(hh + j, POLY_LOGN);
-                    double angle = neg_two_pi_over_2n * static_cast<double>(br);
-                    complex_double s(sycl::cos(angle), sycl::sin(angle));
+#ifdef FPGA_EMULATOR
+                the_fft_output_t hw_out = the_fft(rtl_instance, hw_in);
+#else
+                the_fft_output_t hw_out = the_fft(hw_in);
+#endif
 
-                    for (size_t k = kstart; k < kstart + tt; ++k) {
-                        complex_double u = data[k];
-                        complex_double v = data[k + tt];
-                        data[k] = u + v;
-                        data[k + tt] = (u - v) * s;
-                    }
+                if (hw_out.port_v_out_s == 1) {
+                    encoding_block out;
+                    out.element0 = complex_double(hw_out.port_data_out_0re, hw_out.port_data_out_0im);
+                    out.element1 = complex_double(hw_out.port_data_out_1re, hw_out.port_data_out_1im);
+                    out.element2 = complex_double(hw_out.port_data_out_2re, hw_out.port_data_out_2im);
+                    out.element3 = complex_double(hw_out.port_data_out_3re, hw_out.port_data_out_3im);
+
+                    IFFTToScaleReducePipes::write(out);
+
+                    if (++output_count >= NUM_BLOCKS) break;
                 }
-                tt <<= 1;
-                hh >>= 1;
             }
 
-            [[intel::initiation_interval(1)]]
-            for (size_t blk = 0; blk < NUM_BLOCKS; ++blk) {
-                size_t base = blk * LANES;
-                encoding_block out;
-                out.element0 = data[base + 0];
-                out.element1 = data[base + 1];
-                out.element2 = data[base + 2];
-                out.element3 = data[base + 3];
-                IFFTToScaleReducePipes::write(out);
-            }
+#ifdef FPGA_EMULATOR
+            the_fft_delete_instance(rtl_instance);
+#endif
         });
-    }
-
-private:
-    static size_t bitrev(size_t input, size_t numbits) {
-        size_t t = (((input & 0xaaaa) >> 1) | ((input & 0x5555) << 1));
-        t = (((t & 0xcccc) >> 2) | ((t & 0x3333) << 2));
-        t = (((t & 0xf0f0) >> 4) | ((t & 0x0f0f) << 4));
-        t = (((t & 0xff00) >> 8) | ((t & 0x00ff) << 8));
-        return (numbits == 0) ? 0 : (t >> (16 - numbits));
     }
 };
 

@@ -33,7 +33,8 @@ public:
 
         h.single_task<ScaleAndReduceKernelTask<P>>([=]() [[intel::kernel_args_restrict]] {
             using Pipes = PipeSet<P>;
-            double n_inv = kernel_scale / static_cast<double>(POLY_N);
+            // RTL IFFT includes 1/N but outputs 2x expected, so divide by 2
+            double n_inv = kernel_scale / 2.0;
 
             [[intel::initiation_interval(1)]]
             for (size_t blk = 0; blk < NUM_BLOCKS; ++blk) {
