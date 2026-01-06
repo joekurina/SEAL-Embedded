@@ -33,7 +33,6 @@ public:
             size_t tt = 1;
             size_t hh = POLY_N >> 1;
 
-            #pragma unroll 4
             for (size_t i = 0; i < POLY_LOGN; ++i) {
                 size_t j = 0;
                 size_t kstart = 0;
