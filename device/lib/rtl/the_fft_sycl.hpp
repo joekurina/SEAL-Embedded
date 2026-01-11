@@ -1,6 +1,6 @@
 // ------------------------------------------------------------------------- 
-// High Level Design Compiler for Intel(R) FPGAs Version 24.1 (Release Build #1f326d321c)
-// Software model created on 2026-01-05 14:38:50
+// High Level Design Compiler for Altera(R) FPGAs Version 25.3.1 (Release Build #904b514b28)
+// Software model created on 2026-01-10 12:28:44
 // Generation mode: Bit Accurate
 // ------------------------------------------------------------------------- 
 #ifndef SOFTWARE_MODEL_WRAPPER_THE_FFT_H_
@@ -54,8 +54,6 @@ CSL_PACKED(typedef struct
 #ifdef FPGA_EMULATOR
 #ifdef NO_SYCL
 the_fft_output_t the_fft(fft_example_DUT* instance, the_fft_input_t input);
-fft_example_DUT* the_fft_new_instance();
-void the_fft_delete_instance(fft_example_DUT* instance);
 #else
 SYCL_EXTERNAL the_fft_output_t the_fft(fft_example_DUT* instance, the_fft_input_t input);
 SYCL_EXTERNAL fft_example_DUT* the_fft_new_instance();

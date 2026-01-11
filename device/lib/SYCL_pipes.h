@@ -8,6 +8,14 @@
 
 namespace sycl_ckks {
 
+// Pre-twist pipeline: Entry -> PreTwist -> IFFT
+struct SharedToPreTwistPipeId {};
+using SharedToPreTwistPipe = sycl::ext::intel::pipe<SharedToPreTwistPipeId, encoding_block, PIPE_CAPACITY>;
+
+struct PreTwistToIFFTPipeId {};
+using PreTwistToIFFTPipe = sycl::ext::intel::pipe<PreTwistToIFFTPipeId, encoding_block, PIPE_CAPACITY>;
+
+// Legacy pipe (kept for compatibility, but no longer used in main pipeline)
 struct SharedToIFFTPipeId {};
 using SharedToIFFTPipe = sycl::ext::intel::pipe<SharedToIFFTPipeId, encoding_block, PIPE_CAPACITY>;
 

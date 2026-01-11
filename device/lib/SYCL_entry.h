@@ -25,7 +25,7 @@ public:
             for (size_t blk = 0; blk < NUM_BLOCKS; ++blk) {
                 PipelineInputBlock block = input[blk];
 
-                SharedToIFFTPipe::write(block.encoding);
+                SharedToPreTwistPipe::write(block.encoding);
                 ErrorToScaleReducePipes::write(block.error);
 
                 PipeSet<0>::EntryToNTTAPipe::write(block.secret_key[0]);

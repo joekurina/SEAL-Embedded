@@ -9,6 +9,7 @@
 #include "SYCL_pipeline_exit.h"
 #include "SYCL_ntt.h"
 #include "SYCL_ifft.h"
+#include "SYCL_pre_twist.h"
 #include "SYCL_scale_and_reduce.h"
 #include "SYCL_poly_mult_neg_add.h"
 
@@ -25,52 +26,25 @@ using namespace sycl_ckks;
 // NWC (Negacyclic) Twist for RTL IFFT Compatibility
 // =============================================================================
 //
-// BACKGROUND:
 // The CKKS encoding requires a negacyclic IFFT operating on the polynomial
-// ring Z[X]/(X^N + 1). This uses 2N-th roots of unity: ψ = exp(-πi/N).
+// ring Z[X]/(X^N + 1), using 2N-th roots of unity: ψ = exp(πi/N).
 //
-// However, our DSP Builder-generated RTL IFFT uses standard N-th roots of
-// unity: ω = exp(-2πi/N), which corresponds to the ring Z[X]/(X^N - 1).
+// Our DSP Builder-generated RTL IFFT uses standard N-th roots of unity:
+// ω = exp(2πi/N), corresponding to the ring Z[X]/(X^N - 1).
 //
-// SOLUTION:
-// Apply a "twist" to the input data before the standard IFFT. Multiplying
-// each input sample x[k] by ψ^k = exp(πik/N) converts the standard IFFT
-// result into the negacyclic IFFT result we need.
+// To convert the standard IFFT to negacyclic, we apply a "pre-twist" to the
+// input data: multiply each sample x[k] by ψ^k = exp(πik/N).
 //
 // Mathematically: IFFT_nwc(x) = IFFT_std(twist(x))
 // where twist(x)[k] = x[k] * exp(πik/N)
 //
-// FUTURE REFACTORING:
-// When regenerating RTL with correct NWC twiddle factors built into the
-// hardware, remove this twist function and the call to apply_nwc_twist()
-// in SYCL_encrypt(). The RTL will then directly compute the negacyclic
-// IFFT without host-side preprocessing.
+// The pre-twist is performed in the PreTwistKernel (SYCL_pre_twist.h) which
+// runs as part of the FPGA pipeline before the IFFT RTL kernel.
 //
-// To generate NWC-native RTL, modify the DSP Builder twiddle ROM .hex files
-// to use ψ^k = exp(-πik/N) instead of ω^k = exp(-2πik/N).
+// FUTURE OPTIMIZATION:
+// Regenerate the RTL IFFT with native NWC twiddle factors built into the
+// hardware. This would eliminate the PreTwistKernel entirely.
 // =============================================================================
-
-/**
- * @brief Apply NWC twist to convert standard IFFT input to negacyclic IFFT input.
- *
- * Multiplies each element x[k] by exp(πik/N) where N is the polynomial degree.
- * This pre-processing step allows a standard IFFT to produce negacyclic results.
- *
- * @param n     Polynomial degree (number of complex samples)
- * @param data  Complex encoding buffer to twist (modified in-place)
- *
- * @note Remove this function when RTL IFFT has native NWC twiddle factors.
- */
-static void apply_nwc_twist(size_t n, complex_double* data)
-{
-    const double pi_over_n = M_PI / static_cast<double>(n);
-
-    for (size_t k = 0; k < n; ++k) {
-        double angle = pi_over_n * static_cast<double>(k);
-        complex_double twist(std::cos(angle), std::sin(angle));
-        data[k] *= twist;
-    }
-}
 
 static void pack_input(
     size_t n,
@@ -204,6 +178,11 @@ static std::vector<event> run_pipeline(
 
         events.push_back(q.submit([&](handler& h) {
             IFFTKernel kernel;
+            kernel(h);
+        }));
+
+        events.push_back(q.submit([&](handler& h) {
+            PreTwistKernel kernel;
             kernel(h);
         }));
 

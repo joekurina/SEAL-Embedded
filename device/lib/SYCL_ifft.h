@@ -27,7 +27,7 @@ public:
             [[intel::initiation_interval(1)]]
             while (true) {
                 bool input_valid = false;
-                encoding_block block = SharedToIFFTPipe::read(input_valid);
+                encoding_block block = PreTwistToIFFTPipe::read(input_valid);
 
                 the_fft_input_t hw_in;
                 hw_in.port_v_in_s = input_valid ? 1 : 0;
