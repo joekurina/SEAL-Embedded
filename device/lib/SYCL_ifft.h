@@ -3,6 +3,7 @@
 #include "SYCL_common.h"
 #include "SYCL_pipes.h"
 #include "SYCL_data_types.h"
+#include "SYCL_ifft_4k_roots.h"
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/fpga_extensions.hpp>
 
@@ -29,7 +30,6 @@ public:
                 data[base + 3] = block.element3;
             }
 
-            constexpr double neg_two_pi_over_2n = -2.0 * M_PI / static_cast<double>(POLY_N << 1);
             size_t tt = 1;
             size_t hh = POLY_N >> 1;
 
@@ -37,9 +37,9 @@ public:
                 size_t j = 0;
                 size_t kstart = 0;
                 for (; j < hh; ++j, kstart += (tt << 1)) {
-                    size_t br = bitrev(hh + j, POLY_LOGN);
-                    double angle = neg_two_pi_over_2n * static_cast<double>(br);
-                    complex_double s(sycl::cos(angle), sycl::sin(angle));
+                    size_t twiddle_idx = hh + j;
+                    complex_double s(IFFT_4K_TWIDDLE_REAL[twiddle_idx], 
+                                     IFFT_4K_TWIDDLE_IMAG[twiddle_idx]);
 
                     for (size_t k = kstart; k < kstart + tt; ++k) {
                         complex_double u = data[k];
