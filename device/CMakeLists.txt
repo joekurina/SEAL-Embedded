@@ -103,6 +103,7 @@ target_include_directories(${TARGET_NAME} PUBLIC
 target_link_libraries(${TARGET_NAME} PRIVATE m)
 # Link RTL static library
 target_link_libraries(${TARGET_NAME} PRIVATE ${CMAKE_CURRENT_LIST_DIR}/lib/rtl/the_nwc_4k_ntt.a)
+target_link_libraries(${TARGET_NAME} PRIVATE ${CMAKE_CURRENT_LIST_DIR}/lib/rtl/fhe_ifft_4k_4lanes_double_253.a)
 
 if(NOT DEFINED SEAL_EMBEDDED_VERSION)
   set(SEAL_EMBEDDED_VERSION "1.1.0")
@@ -116,6 +117,7 @@ if(SE_BUILD_TYPE STREQUAL "Tests")
         target_link_libraries(seal_embedded_tests PRIVATE m gcc_s c ${TARGET_NAME})
         # Link RTL static library to tests
         target_link_libraries(seal_embedded_tests PRIVATE ${CMAKE_CURRENT_LIST_DIR}/lib/rtl/the_nwc_4k_ntt.a)
+        target_link_libraries(seal_embedded_tests PRIVATE ${CMAKE_CURRENT_LIST_DIR}/lib/rtl/fhe_ifft_4k_4lanes_double_253.a)
     else()
         message(WARNING "Test sources not found, skipping test executable.")
     endif()
@@ -139,6 +141,7 @@ if(TARGET seal_embedded_tests OR SE_BUILD_TYPE STREQUAL "Lib")
               -I../lib/rtl
               ../lib/SYCL_ckks_sym.cpp
               ../lib/rtl/the_nwc_4k_ntt.a
+              ../lib/rtl/fhe_ifft_4k_4lanes_double_253.a
       COMMENT "Compiling SYCL file to generate FPGA hardware report (minimal flags)"
       VERBATIM
       # Run command from build directory
