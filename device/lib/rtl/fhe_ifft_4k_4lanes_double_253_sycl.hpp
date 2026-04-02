@@ -1,11 +1,11 @@
 // ------------------------------------------------------------------------- 
 // High Level Design Compiler for Altera(R) FPGAs Version 25.3 (Release Build #17e6417164)
-// Software model created on 2026-03-23 08:12:47
+// Software model created on 2026-04-02 08:17:35
 // Generation mode: Bit Accurate
 // ------------------------------------------------------------------------- 
 #ifndef SOFTWARE_MODEL_WRAPPER_FHE_IFFT_4K_4LANES_DOUBLE_253_H_
 #define SOFTWARE_MODEL_WRAPPER_FHE_IFFT_4K_4LANES_DOUBLE_253_H_
-class ifft1k_DUT;
+class ifft4k_base_DUT;
 
 #ifndef NO_SYCL
 #include <sycl/sycl.hpp>
@@ -52,11 +52,11 @@ CSL_PACKED(typedef struct
 
 #ifdef FPGA_EMULATOR
 #ifdef NO_SYCL
-fhe_ifft_4k_4lanes_double_253_output_t fhe_ifft_4k_4lanes_double_253(ifft1k_DUT* instance, fhe_ifft_4k_4lanes_double_253_input_t input);
+fhe_ifft_4k_4lanes_double_253_output_t fhe_ifft_4k_4lanes_double_253(ifft4k_base_DUT* instance, fhe_ifft_4k_4lanes_double_253_input_t input);
 #else
-SYCL_EXTERNAL fhe_ifft_4k_4lanes_double_253_output_t fhe_ifft_4k_4lanes_double_253(ifft1k_DUT* instance, fhe_ifft_4k_4lanes_double_253_input_t input);
-SYCL_EXTERNAL ifft1k_DUT* fhe_ifft_4k_4lanes_double_253_new_instance();
-SYCL_EXTERNAL void fhe_ifft_4k_4lanes_double_253_delete_instance(ifft1k_DUT* instance);
+SYCL_EXTERNAL fhe_ifft_4k_4lanes_double_253_output_t fhe_ifft_4k_4lanes_double_253(ifft4k_base_DUT* instance, fhe_ifft_4k_4lanes_double_253_input_t input);
+SYCL_EXTERNAL ifft4k_base_DUT* fhe_ifft_4k_4lanes_double_253_new_instance();
+SYCL_EXTERNAL void fhe_ifft_4k_4lanes_double_253_delete_instance(ifft4k_base_DUT* instance);
 #endif
 #else
 SYCL_EXTERNAL fhe_ifft_4k_4lanes_double_253_output_t fhe_ifft_4k_4lanes_double_253(fhe_ifft_4k_4lanes_double_253_input_t input);

@@ -9,7 +9,10 @@ constexpr size_t POLY_N = 4096;
 constexpr size_t POLY_LOGN = 12;
 constexpr size_t LANES = 4;
 constexpr size_t NUM_BLOCKS = POLY_N / LANES;
-constexpr size_t PIPE_CAPACITY = NUM_BLOCKS;
+constexpr size_t PIPE_DEPTH_BUFFERED = NUM_BLOCKS;   // Pipes that must buffer a full polynomial
+                                                      // (producer far ahead of consumer due to IFFT batch latency)
+constexpr size_t PIPE_DEPTH_STREAMING = 64;           // Pipes where producer/consumer run at II=1 in lock-step
+                                                      // (compiler may increase beyond this for stall-freedom)
 constexpr int MAX_PIPELINES = 3;
 constexpr size_t NUM_MODULI = 3;
 

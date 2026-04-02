@@ -114,8 +114,11 @@ set_target_properties(${TARGET_NAME} PROPERTIES OUTPUT_NAME ${TARGET_NAME})
 if(SE_BUILD_TYPE STREQUAL "Tests")
     if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/main.c")
         add_executable(seal_embedded_tests ${SE_TESTS_SOURCE_FILES})
+        # Allow multiple definitions: both RTL archives (NTT and IFFT) contain
+        # identical csl::error/warning/info symbols from Intel's CSL support library
+        target_link_options(seal_embedded_tests PRIVATE "LINKER:--allow-multiple-definition")
         target_link_libraries(seal_embedded_tests PRIVATE m gcc_s c ${TARGET_NAME})
-        # Link RTL static library to tests
+        # Link RTL static libraries to tests
         target_link_libraries(seal_embedded_tests PRIVATE ${CMAKE_CURRENT_LIST_DIR}/lib/rtl/the_nwc_4k_ntt.a)
         target_link_libraries(seal_embedded_tests PRIVATE ${CMAKE_CURRENT_LIST_DIR}/lib/rtl/fhe_ifft_4k_4lanes_double_253.a)
     else()
