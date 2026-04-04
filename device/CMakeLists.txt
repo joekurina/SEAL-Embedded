@@ -8,7 +8,7 @@ set(SE_BUILD_LOCAL ON CACHE BOOL "Build for native instead of device" FORCE)
 set(CMAKE_C_COMPILER icx)
 set(CMAKE_CXX_COMPILER icpx)
 
-set(FPGA_DEVICE "Agilex7")
+set(FPGA_DEVICE "Agilex7" CACHE STRING "FPGA target device (e.g. Agilex7 for report, ofs_ia840f for hardware)")
 set(TARGET_NAME sealembedded)
 set(REPORT_ARTIFACT_NAME ${TARGET_NAME}_report_artifact)
 
@@ -132,22 +132,40 @@ endif()
 if(TARGET seal_embedded_tests OR SE_BUILD_TYPE STREQUAL "Lib")
     add_custom_target(fpga_report_file
       COMMAND ${CMAKE_CXX_COMPILER}
-              # Essential flags only:
               -v
               -fsycl
               -fintelfpga
-              -Xshardware             
-              -Xstarget=${FPGA_DEVICE} 
-              -fsycl-link=early       
+              -Xshardware
+              -Xstarget=${FPGA_DEVICE}
+              -fsycl-link=early
               -I../lib
               -I../adapter_output_data
               -I../lib/rtl
               ../lib/SYCL_ckks_sym.cpp
               ../lib/rtl/the_nwc_4k_ntt.a
               ../lib/rtl/fhe_ifft_4k_4lanes_double_253.a
-      COMMENT "Compiling SYCL file to generate FPGA hardware report (minimal flags)"
+      COMMENT "Generating FPGA optimization report (early link, no synthesis)"
       VERBATIM
-      # Run command from build directory
+      WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+
+    add_custom_target(fpga_hardware
+      COMMAND ${CMAKE_CXX_COMPILER}
+              -v
+              -fsycl
+              -fintelfpga
+              -Xshardware
+              -Xstarget=${FPGA_DEVICE}
+              -DFPGA_HARDWARE
+              -I../lib
+              -I../adapter_output_data
+              -I../lib/rtl
+              -o seal_embedded_fpga
+              ../lib/SYCL_ckks_sym.cpp
+              ../lib/rtl/the_nwc_4k_ntt.a
+              ../lib/rtl/fhe_ifft_4k_4lanes_double_253.a
+      COMMENT "Full FPGA hardware synthesis for ${FPGA_DEVICE} (this will take hours)"
+      VERBATIM
       WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
 endif()

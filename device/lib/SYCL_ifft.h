@@ -22,12 +22,20 @@ public:
             ifft4k_base_DUT* rtl_instance = fhe_ifft_4k_4lanes_double_253_new_instance();
 #endif
 
+            // RTL pipeline latency: 3773 cycles (measured in the test harness).
+            // Total iterations = input blocks + pipeline drain.
+            constexpr size_t RTL_PIPELINE = 3773;
+            constexpr size_t TOTAL_ITERATIONS = NUM_BLOCKS + RTL_PIPELINE;
             size_t output_count = 0;
 
             [[intel::initiation_interval(1)]]
-            while (true) {
+            for (size_t cycle = 0; cycle < TOTAL_ITERATIONS; ++cycle) {
                 bool input_valid = false;
-                encoding_block block = SharedToIFFTPipe::read(input_valid);
+                encoding_block block{};
+
+                if (cycle < NUM_BLOCKS) {
+                    block = SharedToIFFTPipe::read(input_valid);
+                }
 
                 fhe_ifft_4k_4lanes_double_253_input_t hw_in;
                 hw_in.port_v_in_s = input_valid;
@@ -54,8 +62,7 @@ public:
                     out.element3 = complex_double(hw_out.port_data_out_3re, hw_out.port_data_out_3im);
 
                     IFFTToScaleReducePipes::write(out);
-
-                    if (++output_count >= NUM_BLOCKS) break;
+                    output_count++;
                 }
             }
 
