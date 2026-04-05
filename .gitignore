@@ -620,3 +620,4 @@ MigrationBackup/
 fft_example_dsp_builder/
 device/CLAUDE.md
 device/IFFT_DIAGNOSIS.md
+device/BuildError.md

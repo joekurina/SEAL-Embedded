@@ -137,6 +137,7 @@ if(TARGET seal_embedded_tests OR SE_BUILD_TYPE STREQUAL "Lib")
               -fintelfpga
               -Xshardware
               -Xstarget=${FPGA_DEVICE}
+              -Xsset=VHDL_INPUT_VERSION=VHDL_2008
               -fsycl-link=early
               -I../lib
               -I../adapter_output_data
@@ -156,6 +157,7 @@ if(TARGET seal_embedded_tests OR SE_BUILD_TYPE STREQUAL "Lib")
               -fintelfpga
               -Xshardware
               -Xstarget=${FPGA_DEVICE}
+              -Xsset=VHDL_INPUT_VERSION=VHDL_2008
               -DFPGA_HARDWARE
               -I../lib
               -I../adapter_output_data
